@@ -4,22 +4,50 @@
     "step": {
       "user": {
         "title": "Set up HA Security",
-        "description": "Monitor authentication metadata on this Home Assistant instance. Detailed metadata is available when debug logging is enabled.",
-        "data": {"scan_interval": "Polling interval (seconds)"},
-        "data_description": {"scan_interval": "Minimum 30 seconds. Default 300 seconds."}
+        "description": "Read-only authentication observations and user-attributed service-call audit, stored locally with configurable retention.",
+        "data": {
+          "scan_interval": "Polling interval (seconds)",
+          "retention_days": "Audit retention (days)",
+          "recent_minutes": "Recent observation window (minutes)",
+          "expose_network": "Expose latest IP/client on entities"
+        },
+        "data_description": {
+          "scan_interval": "Minimum 30 seconds. Default 300 seconds.",
+          "retention_days": "Local history; default 30 days, maximum 365. Also capped at 10,000 events.",
+          "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
+          "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder."
+        }
       }
     },
-    "error": {"invalid_interval": "Enter a whole number of at least 30 seconds."},
-    "abort": {"already_configured": "HA Security is already configured."}
+    "error": {
+      "invalid_interval": "Enter a whole number of at least 30 seconds.",
+      "invalid_settings": "Check the polling interval, retention days, and observation window."
+    },
+    "abort": {
+      "already_configured": "HA Security is already configured."
+    }
   },
   "options": {
     "step": {
       "init": {
         "title": "HA Security options",
-        "data": {"scan_interval": "Polling interval (seconds)"},
-        "data_description": {"scan_interval": "Minimum 30 seconds. Changes restart the monitor."}
+        "data": {
+          "scan_interval": "Polling interval (seconds)",
+          "retention_days": "Audit retention (days)",
+          "recent_minutes": "Recent observation window (minutes)",
+          "expose_network": "Expose latest IP/client on entities"
+        },
+        "data_description": {
+          "scan_interval": "Minimum 30 seconds. Changes restart the monitor.",
+          "retention_days": "Local history; default 30 days, maximum 365. Also capped at 10,000 events.",
+          "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
+          "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder."
+        }
       }
     },
-    "error": {"invalid_interval": "Enter a whole number of at least 30 seconds."}
+    "error": {
+      "invalid_interval": "Enter a whole number of at least 30 seconds.",
+      "invalid_settings": "Check the polling interval, retention days, and observation window."
+    }
   }
 }

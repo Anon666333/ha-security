@@ -1,0 +1,47 @@
+query_audit:
+  name: Search audit history
+  description: Search retained local audit metadata. Administrator access required.
+  fields:
+    text:
+      name: Search text
+      selector:
+        text:
+    user_id:
+      name: Home Assistant user ID
+      selector:
+        text:
+    kind:
+      name: Event kind
+      selector:
+        select:
+          options:
+            - baseline_initialized
+            - token_baseline
+            - new_token
+            - token_updated
+            - token_removed
+            - new_ip
+            - new_client
+            - service_call
+    limit:
+      name: Maximum results
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+    offset:
+      name: Result offset
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 10000
+          mode: box
+get_inventory:
+  name: Get authentication inventory
+  description: Return safe token metadata and user IDs. Administrator access required.
+scan_now:
+  name: Scan authentication now
+  description: Refresh the inventory immediately without restarting. Administrator access required.

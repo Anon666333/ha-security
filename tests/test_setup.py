@@ -25,15 +25,21 @@ def load_entrypoint(track):
         "homeassistant.config_entries",
         "homeassistant.helpers", "homeassistant.helpers.config_validation",
         "homeassistant.helpers.event", "homeassistant.helpers.typing",
+        "homeassistant.helpers.storage", "homeassistant.helpers.service",
     ):
         modules[name] = ModuleType(name)
     modules["homeassistant.const"].EVENT_HOMEASSISTANT_STOP = "stop"
+    modules["homeassistant.const"].Platform = SimpleNamespace(SENSOR="sensor")
+    modules["homeassistant.const"].EVENT_CALL_SERVICE = "call_service"
     modules["homeassistant.config_entries"].ConfigEntry = object
     modules["homeassistant.config_entries"].ConfigFlow = Flow
     modules["homeassistant.config_entries"].OptionsFlow = Flow
     modules["homeassistant"].config_entries = modules["homeassistant.config_entries"]
     modules["homeassistant.core"].HomeAssistant = object
     modules["homeassistant.core"].callback = lambda fn: fn
+    modules["homeassistant.core"].SupportsResponse = SimpleNamespace(ONLY="only")
+    modules["homeassistant.helpers.storage"].Store = FakeStore
+    modules["homeassistant.helpers.service"].async_register_admin_service = Mock()
     modules["homeassistant.helpers.config_validation"].positive_int = positive_int
     modules["homeassistant.helpers.config_validation"].config_entry_only_config_schema = lambda domain: vol.Schema({})
     modules["homeassistant.helpers.event"].async_track_time_interval = track
@@ -48,7 +54,15 @@ def load_entrypoint(track):
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
         module.flow_module = importlib.import_module(spec.name + ".config_flow")
+        module.audit_module = importlib.import_module(spec.name + ".audit")
     return module
+
+
+class FakeStore:
+    def __init__(self, *args):
+        self.async_load = AsyncMock(return_value=None)
+        self.async_save = AsyncMock()
+        self.async_delay_save = Mock()
 
 
 class Flow:
@@ -78,8 +92,15 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.module = load_entrypoint(self.track)
         self.hass = SimpleNamespace(
             auth=SimpleNamespace(async_get_users=AsyncMock(return_value=[])),
-            data={}, bus=SimpleNamespace(async_listen_once=Mock(return_value=Mock())),
-            config_entries=SimpleNamespace(async_reload=AsyncMock()),
+            data={}, bus=SimpleNamespace(
+                async_listen_once=Mock(return_value=Mock()),
+                async_listen=Mock(return_value=Mock()),
+            ),
+            services=SimpleNamespace(async_remove=Mock()),
+            config_entries=SimpleNamespace(
+                async_reload=AsyncMock(), async_forward_entry_setups=AsyncMock(),
+                async_unload_platforms=AsyncMock(return_value=True),
+            ),
         )
         self.callbacks = []
         self.entry = SimpleNamespace(
@@ -109,7 +130,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.track.assert_called_once()
         event, stop = self.hass.bus.async_listen_once.call_args.args
         self.assertEqual(event, "stop")
-        stop(None)
+        await stop(None)
         self.cancel.assert_called_once()
         self.assertNotIn("ha_security", self.hass.data)
 
@@ -142,9 +163,9 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         flow = self.module.flow_module.SecurityConfigFlow()
         self.assertEqual((await flow.async_step_user())["type"], "form")
         result = await flow.async_step_user({"scan_interval": 10})
-        self.assertEqual(result["errors"], {"scan_interval": "invalid_interval"})
+        self.assertEqual(result["errors"], {"base": "invalid_settings"})
         result = await flow.async_step_user({"scan_interval": 120})
-        self.assertEqual(result["data"], {"scan_interval": 120})
+        self.assertEqual(result["data"]["scan_interval"], 120)
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(flow.unique_id, "ha_security")
         flow.configured = True
@@ -157,6 +178,69 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         result = await flow.async_step_init()
         self.assertEqual(result["data_schema"]({})["scan_interval"], 60)
         result = await flow.async_step_init({"scan_interval": 1})
-        self.assertEqual(result["errors"], {"scan_interval": "invalid_interval"})
+        self.assertEqual(result["errors"], {"base": "invalid_settings"})
         result = await flow.async_step_init({"scan_interval": 90})
-        self.assertEqual(result["data"], {"scan_interval": 90})
+        self.assertEqual(result["data"]["scan_interval"], 90)
+
+    def test_mvp_option_bounds(self):
+        schema = self.module.flow_module.settings_schema({})
+        defaults = schema({"scan_interval": 30})
+        self.assertEqual(defaults["retention_days"], 30)
+        self.assertEqual(defaults["recent_minutes"], 15)
+        self.assertFalse(defaults["expose_network"])
+        for field, invalid in (("retention_days", 0), ("retention_days", 366),
+                               ("recent_minutes", 0), ("recent_minutes", 1441)):
+            with self.assertRaises(vol.Invalid):
+                schema({"scan_interval": 30, field: invalid})
+
+    async def test_admin_actions_registered_and_responses(self):
+        register = self.module.audit_module.async_register_admin_service
+        register.reset_mock()
+        await self.module.async_setup_entry(self.hass, self.entry)
+        registered = {item.args[2]: item for item in register.call_args_list}
+        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now"})
+        for item in registered.values():
+            self.assertEqual(item.kwargs["supports_response"], "only")
+        response = await registered["scan_now"].args[3](SimpleNamespace(data={}))
+        self.assertEqual(response, {"success": True})
+        response = await registered["get_inventory"].args[3](SimpleNamespace(data={}))
+        self.assertEqual(response["users"], [])
+        response = await registered["query_audit"].args[3](SimpleNamespace(data={"kind": "baseline_initialized"}))
+        self.assertEqual(response["total"], 1)
+
+    async def test_service_subscription_and_shutdown_flush(self):
+        await self.module.async_setup_entry(self.hass, self.entry)
+        event_type, listener = self.hass.bus.async_listen.call_args.args
+        self.assertEqual(event_type, "call_service")
+        event = SimpleNamespace(
+            data={"domain": "light", "service": "turn_on"},
+            context=SimpleNamespace(user_id="u", id="context", parent_id=None),
+        )
+        await listener(event)
+        monitor = self.hass.data["ha_security"]
+        self.assertEqual(monitor.history.query(kind="service_call")["total"], 1)
+        await monitor.async_close()
+        monitor.audit.store.async_save.assert_awaited_once()
+        await listener(event)
+        self.assertEqual(monitor.history.query(kind="service_call")["total"], 1)
+        self.assertFalse(await monitor.async_refresh())
+
+    async def test_platform_setup_failure_cleans_runtime(self):
+        self.hass.config_entries.async_forward_entry_setups.side_effect = RuntimeError("platform")
+        with self.assertRaisesRegex(RuntimeError, "platform"):
+            await self.module.async_setup_entry(self.hass, self.entry)
+        self.assertNotIn("ha_security", self.hass.data)
+        self.cancel.assert_called_once()
+        self.assertEqual(self.hass.services.async_remove.call_count, 3)
+
+    async def test_storage_batches_without_indefinite_deferral(self):
+        await self.module.async_setup_entry(self.hass, self.entry)
+        audit = self.hass.data["ha_security"].audit
+        audit.changed()
+        audit.changed()
+        audit.store.async_delay_save.assert_called_once()
+        data = audit._save_data()
+        audit.changed()
+        self.assertEqual(audit.store.async_delay_save.call_count, 2)
+        audit.history.add("new_test_record")
+        self.assertNotEqual(len(data["records"]), len(audit.history.records))

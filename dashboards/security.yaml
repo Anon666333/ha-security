@@ -1,0 +1,42 @@
+title: HA Security
+views:
+  - title: Security
+    path: security
+    icon: mdi:shield-account
+    cards:
+      - type: markdown
+        title: Security observations
+        content: >-
+          Recent observations combine recorded token use and user-attributed
+          service invocations. They do not prove a person is online or identify
+          a physical device/location. New IP/client observations are leads to
+          investigate, not confirmed threats.
+      - type: markdown
+        title: Users and credential grants
+        content: |
+          {% for entity in states.sensor if entity.attributes.get('ha_security_metric') == 'refresh_tokens' %}
+          ### {{ entity.name | e }}
+          - Token records: **{{ entity.state | e }}**
+          - Account enabled: {{ entity.attributes.get('is_active') }}
+          - Owner: {{ entity.attributes.get('is_owner') }}
+          - System user: {{ entity.attributes.get('system_generated') }}
+          - Recently observed: **{{ entity.attributes.get('recently_observed') }}**
+          - Last token use: {{ entity.attributes.get('last_token_use') or 'Not observed' }}
+          - Last attributed service call: {{ entity.attributes.get('last_service_call') or 'Not observed' }}
+          - Known IPs: {{ entity.attributes.get('known_ip_count', 0) }}
+          - New observations in retained history: {{ entity.attributes.get('new_observation_count', 0) }}
+          - Last successful scan: {{ entity.attributes.get('last_successful_scan') }}
+          {% if entity.attributes.get('latest_ip') %}
+          - Latest token source IP: {{ entity.attributes.get('latest_ip') | e }}
+          - Latest token client: {{ entity.attributes.get('latest_client') | e }}
+          {% endif %}
+          {% else %}
+          No HA Security user sensors found. Add the integration or run Scan authentication now.
+          {% endfor %}
+      - type: markdown
+        title: Search the local audit
+        content: >-
+          Open Developer tools → Actions → HA Security: Search audit history.
+          Filter by text, user ID, or event kind, and request the response.
+          Use Get authentication inventory to map users to IDs and inspect
+          client/IP/created/last-used metadata. Audit actions require admin access.

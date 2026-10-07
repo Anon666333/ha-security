@@ -3,14 +3,19 @@
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, EVENT_CALL_SERVICE, Platform
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .monitor import AuthMonitor
+from .audit import AuditStore, register_actions, remove_actions
+from .const import (
+    CONF_RETENTION_DAYS, CONF_RECENT_MINUTES, CONF_EXPOSE_NETWORK,
+    DEFAULT_RETENTION_DAYS, DEFAULT_RECENT_MINUTES,
+)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -24,7 +29,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Start monitoring for the single UI configuration entry."""
     if DOMAIN in hass.data:
         return True
-    monitor = AuthMonitor(hass.auth)
+    settings = {**entry.data, **entry.options}
+    audit = AuditStore(hass, settings.get(CONF_RETENTION_DAYS, DEFAULT_RETENTION_DAYS))
+    await audit.load()
+    monitor = AuthMonitor(
+        hass.auth, audit,
+        settings.get(CONF_RECENT_MINUTES, DEFAULT_RECENT_MINUTES),
+        settings.get(CONF_EXPOSE_NETWORK, False),
+    )
     # A failed initial read does not prevent future retry attempts.
     await monitor.async_refresh()
     unsubscribe = async_track_time_interval(
@@ -36,9 +48,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )),
     )
 
-    @callback
-    def stop(_event):
+    async def stop(_event):
         unsubscribe()
+        await monitor.async_close()
         hass.data.pop(DOMAIN, None)
 
     entry.async_on_unload(unsubscribe)
@@ -47,13 +59,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
     hass.data[DOMAIN] = monitor
+    entry.async_on_unload(hass.bus.async_listen(EVENT_CALL_SERVICE, monitor.async_service_event))
+    register_actions(hass, monitor)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
+    except Exception:
+        unsubscribe()
+        await monitor.async_close()
+        remove_actions(hass)
+        hass.data.pop(DOMAIN, None)
+        raise
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove the snapshot; HA invokes registered unload callbacks."""
-    hass.data.pop(DOMAIN, None)
-    return True
+    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    if unloaded:
+        monitor = hass.data.get(DOMAIN)
+        if monitor:
+            await monitor.async_close()
+        remove_actions(hass)
+        hass.data.pop(DOMAIN, None)
+    return unloaded
 
 
 async def async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
