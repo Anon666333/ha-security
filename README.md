@@ -2,7 +2,19 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.1
+## v0.1.2
+
+Each discovered user gets a refresh-token-count sensor, including system and
+inactive users and users with zero tokens. The HA user ID provides a stable
+unique identity across renames. New users are added on the next successful scan;
+deleted users' entities and registry entries are removed. Failed scans mark
+existing sensors unavailable, retain the previous snapshot, and recover on
+the next successful scan.
+
+Sensor attributes include active/owner/system status and last successful scan.
+Token details and IP addresses remain excluded from entities. Token counts
+represent stored credential grants, not online sessions. Home Assistant may
+record count/status/timestamp history according to your Recorder settings.
 
 This is a local custom integration, not a Supervisor add-on. It needs no Home
 Assistant approval, Core fork, HACS installation, or external service.
@@ -22,7 +34,7 @@ Failed scans retain the latest successful
 snapshot and retry at the next interval. Polling is cancelled at HA shutdown.
 
 No credentials are created, changed, or revoked. No browser fingerprinting,
-auth-store file reads, monkey patches, sensors, dashboards, or activity/session
+auth-store file reads, monkey patches, dashboards, or activity/session
 classification are included. Only explicitly selected metadata enters snapshots;
 raw token values, JWT keys, credential objects, and auth-object representations
 are never logged or retained by this integration.

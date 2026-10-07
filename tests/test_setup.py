@@ -28,6 +28,7 @@ def load_entrypoint(track):
     ):
         modules[name] = ModuleType(name)
     modules["homeassistant.const"].EVENT_HOMEASSISTANT_STOP = "stop"
+    modules["homeassistant.const"].Platform = SimpleNamespace(SENSOR="sensor")
     modules["homeassistant.config_entries"].ConfigEntry = object
     modules["homeassistant.config_entries"].ConfigFlow = Flow
     modules["homeassistant.config_entries"].OptionsFlow = Flow
@@ -79,7 +80,10 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.hass = SimpleNamespace(
             auth=SimpleNamespace(async_get_users=AsyncMock(return_value=[])),
             data={}, bus=SimpleNamespace(async_listen_once=Mock(return_value=Mock())),
-            config_entries=SimpleNamespace(async_reload=AsyncMock()),
+            config_entries=SimpleNamespace(
+                async_reload=AsyncMock(), async_forward_entry_setups=AsyncMock(),
+                async_unload_platforms=AsyncMock(return_value=True),
+            ),
         )
         self.callbacks = []
         self.entry = SimpleNamespace(

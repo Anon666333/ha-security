@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from .auth_monitor import async_snapshot
@@ -17,6 +18,18 @@ class AuthMonitor:
         self.auth = auth
         self.snapshot: dict[str, list[dict[str, Any]]] | None = None
         self._lock = asyncio.Lock()
+        self.last_scan_success = False
+        self.last_successful_scan = None
+        self.listeners = []
+
+    def subscribe(self, listener):
+        """Register a platform update callback and return its cleanup."""
+        self.listeners.append(listener)
+        return lambda: self.listeners.remove(listener)
+
+    async def _notify(self):
+        for listener in tuple(self.listeners):
+            await listener()
 
     async def async_refresh(self, _now: Any = None) -> bool:
         """Refresh safely; failed polls retain the last successful snapshot."""
@@ -29,6 +42,8 @@ class AuthMonitor:
                     "Auth metadata scan failed (%s); will retry at next interval",
                     type(err).__name__,
                 )
+                self.last_scan_success = False
+                await self._notify()
                 return False
             previous = self.snapshot or {"users": [], "tokens": []}
             _LOGGER.debug(
@@ -58,4 +73,7 @@ class AuthMonitor:
                             json.dumps(identifier),
                         )
             self.snapshot = current
+            self.last_scan_success = True
+            self.last_successful_scan = datetime.now(timezone.utc).isoformat()
+            await self._notify()
             return True

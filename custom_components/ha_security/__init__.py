@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
@@ -47,13 +47,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
     hass.data[DOMAIN] = monitor
+    await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove the snapshot; HA invokes registered unload callbacks."""
-    hass.data.pop(DOMAIN, None)
-    return True
+    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    if unloaded:
+        hass.data.pop(DOMAIN, None)
+    return unloaded
 
 
 async def async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
