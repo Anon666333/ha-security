@@ -25,7 +25,26 @@ classification are included. Only explicitly selected metadata enters snapshots;
 raw token values, JWT keys, credential objects, and auth-object representations
 are never logged or retained by this integration.
 
-## Install on a test instance
+## Install with HACS
+
+The repository must be public. The installable integration and `hacs.json`
+must be on the default branch or in a published release before using these
+steps; an open development PR alone is not an installable HACS version.
+
+1. Open HACS → menu → **Custom repositories**.
+2. Add `https://github.com/Anon666333/ha-security` with type **Integration**.
+3. Find **HA Security** in HACS and download it.
+4. Restart Home Assistant.
+5. Open Settings → Devices & services → Add Integration → **HA Security**.
+6. Choose a polling interval and submit. No YAML is required.
+
+HACS manages file downloads and updates; Home Assistant manages the integration's
+setup and options. Restart Home Assistant after installing an update.
+Without releases, HACS downloads the default branch. Published versioned releases
+provide explicit versions to install and update to. No default-catalog approval
+is needed to use a custom repository.
+
+## Manual installation on a test instance
 
 1. Copy the whole `custom_components/ha_security` folder into
    `/config/custom_components/ha_security` on your Home Assistant instance.
