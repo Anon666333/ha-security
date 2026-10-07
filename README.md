@@ -2,7 +2,7 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.0
+## v0.1.1
 
 This is a local custom integration, not a Supervisor add-on. It needs no Home
 Assistant approval, Core fork, HACS installation, or external service.
@@ -15,8 +15,10 @@ type, refresh-token `expire_at` when available, and access-token lifetime in
 seconds. Optional missing fields are null.
 
 The monitor scans at startup and every 300 seconds by default. INFO logs show
-inventory counts on change; DEBUG logs show added/changed metadata and removed
-record IDs. Unchanged scans stay quiet. Failed scans retain the latest successful
+inventory counts on change; DEBUG logs show completion counts and the full safe
+metadata inventory on every successful scan, plus removed record IDs on changes.
+This lets you enable debug logging after setup and still see the current inventory.
+Failed scans retain the latest successful
 snapshot and retry at the next interval. Polling is cancelled at HA shutdown.
 
 No credentials are created, changed, or revoked. No browser fingerprinting,
@@ -59,6 +61,14 @@ is needed to use a custom repository.
    log for download.
 7. Inspect Settings → System → Logs or `home-assistant.log` for the auth
    inventory and metadata records.
+
+When debugging, wait one polling interval or reload the configured integration
+after enabling debug logging. Look for `Auth scan completed`. Each successful
+scan includes this marker even with zero users/tokens or unchanged metadata.
+The condensed System Logs view may show only warnings/errors; use the full Core
+log or the downloaded integration debug log for DEBUG entries.
+Downloading through HACS installs the files but does not start monitoring: you
+must also add HA Security under Devices & services.
 
 Metadata includes personal information (names, client URLs, IPs, timestamps).
 Enable DEBUG only while investigating and protect any collected logs. Disabling

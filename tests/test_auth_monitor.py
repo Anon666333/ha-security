@@ -76,8 +76,11 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs(logger, level=logging.DEBUG) as captured:
             self.assertTrue(await monitor.async_refresh())
         self.assertNotIn("SECRET", "\n".join(captured.output))
-        with self.assertNoLogs(logger, level=logging.DEBUG):
+        with self.assertLogs(logger, level=logging.DEBUG) as captured:
             await monitor.async_refresh()
+        self.assertIn("Auth scan completed", "\n".join(captured.output))
+        self.assertIn("Test client", "\n".join(captured.output))
+        self.assertFalse(any("INFO:" in line for line in captured.output))
         record.last_used_ip = "192.0.2.1"
         with self.assertLogs(logger, level=logging.DEBUG) as captured:
             await monitor.async_refresh()
@@ -102,6 +105,24 @@ class SnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await monitor.async_refresh())
         self.assertEqual(monitor.snapshot, {"users": [], "tokens": []})
 
+    async def test_debug_enabled_after_initial_scan(self):
+        monitor = AuthMonitor(SimpleNamespace(
+            async_get_users=AsyncMock(return_value=[user({"record-1": token()})]),
+        ))
+        logger = logging.getLogger("ha_security_unit.monitor")
+        original_level = logger.level
+        try:
+            logger.setLevel(logging.WARNING)
+            await monitor.async_refresh()
+            with self.assertLogs(logger, level=logging.DEBUG) as captured:
+                await monitor.async_refresh()
+            output = "\n".join(captured.output)
+            self.assertIn("Auth scan completed: 1 users, 1 refresh tokens", output)
+            self.assertIn("Test client", output)
+            self.assertNotIn("SECRET", output)
+        finally:
+            logger.setLevel(original_level)
+
 
 class ManifestTests(unittest.TestCase):
     def test_manifest_matches_package(self):
@@ -109,7 +130,8 @@ class ManifestTests(unittest.TestCase):
             (ROOT / "custom_components/ha_security/manifest.json").read_text()
         )
         self.assertEqual(manifest["domain"], "ha_security")
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.1.1")
+        self.assertIn("custom_components.ha_security", manifest["loggers"])
         self.assertEqual(manifest["requirements"], [])
 
 
