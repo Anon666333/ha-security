@@ -23,11 +23,27 @@ class AuthMonitor:
         async with self._lock:
             try:
                 current = await async_snapshot(self.auth)
-            except Exception:
+            except Exception as err:
                 # Exception text/reprs from auth internals may contain secrets.
-                _LOGGER.error("Auth metadata scan failed; will retry at next interval")
+                _LOGGER.error(
+                    "Auth metadata scan failed (%s); will retry at next interval",
+                    type(err).__name__,
+                )
                 return False
             previous = self.snapshot or {"users": [], "tokens": []}
+            _LOGGER.debug(
+                "Auth scan completed: %s users, %s refresh tokens",
+                len(current["users"]), len(current["tokens"]),
+            )
+            # Debug logging is commonly enabled after the initial scan.
+            # Emit the full safe inventory each debug scan, even if unchanged.
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                for kind in ("users", "tokens"):
+                    for row in current[kind]:
+                        _LOGGER.debug(
+                            "Auth %s metadata: %s", kind,
+                            json.dumps(row, sort_keys=True),
+                        )
             if self.snapshot is None or current != self.snapshot:
                 _LOGGER.info(
                     "Auth inventory: %s users, %s refresh tokens",
@@ -36,12 +52,6 @@ class AuthMonitor:
                 for kind, key in (("users", "user_id"), ("tokens", "token_id")):
                     old = {row[key]: row for row in previous[kind]}
                     new = {row[key]: row for row in current[kind]}
-                    for identifier, row in new.items():
-                        if old.get(identifier) != row:
-                            _LOGGER.debug(
-                                "Auth %s metadata: %s", kind,
-                                json.dumps(row, sort_keys=True),
-                            )
                     for identifier in old.keys() - new.keys():
                         _LOGGER.debug(
                             "Auth %s record removed: %s", kind,
