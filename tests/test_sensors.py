@@ -81,13 +81,13 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
                 entity.entity_id = "sensor." + entity.user_id + "_" + entity.metric
                 entities.append(entity)
         await self.module.async_setup_entry(hass, entry, add)
-        self.assertEqual(len(entities), 6)
+        self.assertEqual(len(entities), 7)
         extra = user()
         extra.id = "second"
         self.auth.async_get_users.return_value = [self.account, extra]
         await self.monitor.async_refresh()
-        self.assertEqual(len(entities), 12)
-        self.assertEqual(entities[6].native_value, 0)
+        self.assertEqual(len(entities), 14)
+        self.assertEqual(entities[7].native_value, 0)
         self.auth.async_get_users.return_value = [extra]
         await self.monitor.async_refresh()
         self.assertTrue(entities[0].removed)
@@ -105,3 +105,8 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recent.native_value, "recently_observed")
         stamp = self.module.UserTokenSensor(self.monitor, self.account.id, "last_token_use")
         self.assertIsNotNone(stamp.native_value.tzinfo)
+        activity = self.module.UserTokenSensor(self.monitor, self.account.id, "recently_used_tokens")
+        self.assertEqual(activity.native_value, 1)
+        self.assertEqual(activity.extra_state_attributes["tokens"][0]["last_used_ip"], "192.0.2.1")
+        self.monitor.expose_network = False
+        self.assertNotIn("tokens", activity.extra_state_attributes)

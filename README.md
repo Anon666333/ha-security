@@ -196,6 +196,32 @@ are cleaned up. You can then remove the custom integration folder.
 
 ## What the metadata means
 
+### Per-user credential activity and IP history (v0.1.4)
+
+Each user has a **Recently used tokens** sensor. Its state counts currently
+present, non-expired credential grants whose recorded last use is within the
+configured recent observation window. It does not count open browser tabs,
+WebSocket connections, or confirmed concurrent sessions.
+
+Enable **Expose IP/client details and retained observations on entities** in
+the integration options to see `tokens` and `ip_observations` attributes.
+Each token row contains its record ID, client ID/name, creation/last-use time,
+latest IP, type/expiry, and recent-use flag. Each retained observation links
+the IP/client to the same token record ID, including observations for grants
+that have since been removed. Record IDs are identifiers, not token secrets.
+
+The separate dashboard YAML includes these details. Entity lists show at most
+100 rows each, with total/truncation attributes; use Search audit history for
+other retained rows. History survives integration reloads and HA restarts in
+the local audit store, subject to configured retention (30 days by default,
+up to 365) and the shared 10,000-event cap. This is not an unlimited archive.
+Recorder retention is separate from the integration's audit retention.
+
+Only IPs visible at polling time can be retained. A token shared by multiple
+clients exposes only its latest recorded IP on each scan, so simultaneous
+connections and rapid IP changes between scans cannot be reconstructed.
+Hostname/geolocation/ASN enrichment is not included in this release.
+
 - A refresh-token record represents a credential grant, not an online session.
   Multiple tabs may share one token; a token may remain after a client goes offline.
 - Last-used fields reflect HA's recorded token usage, not every user action or

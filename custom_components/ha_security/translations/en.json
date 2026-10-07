@@ -9,7 +9,7 @@
           "scan_interval": "Polling interval (seconds)",
           "retention_days": "Audit retention (days)",
           "recent_minutes": "Recent observation window (minutes)",
-          "expose_network": "Expose latest IP/client on entities"
+          "expose_network": "Expose IP/client details and retained observations on entities"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Default 300 seconds.",
@@ -35,7 +35,7 @@
           "scan_interval": "Polling interval (seconds)",
           "retention_days": "Audit retention (days)",
           "recent_minutes": "Recent observation window (minutes)",
-          "expose_network": "Expose latest IP/client on entities"
+          "expose_network": "Expose IP/client details and retained observations on entities"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Changes restart the monitor.",

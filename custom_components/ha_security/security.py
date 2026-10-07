@@ -211,3 +211,41 @@ class SecurityHistory:
                 for row in self.records
             ),
         }
+
+    def token_activity(self, user_id, tokens, recent_minutes=15, now=None):
+        """Expose bounded credential activity, never claim live connections."""
+        now = now or utcnow()
+        rows = []
+        for token in tokens:
+            row = token_metadata(token)
+            stamp = parse_time(row.get("last_used_at"))
+            expiry = row.get("expire_at")
+            expired = isinstance(expiry, (int, float)) and expiry <= now.timestamp()
+            row["recently_used"] = bool(
+                stamp and timedelta(0) <= now - stamp <= timedelta(minutes=recent_minutes)
+                and not expired
+            )
+            row["expired"] = expired
+            rows.append(row)
+        rows.sort(key=lambda row: row.get("last_used_at") or "", reverse=True)
+        observations = []
+        for record in reversed(self.records):
+            metadata = record.get("metadata")
+            if record.get("user_id") != user_id or not isinstance(metadata, dict):
+                continue
+            if not metadata.get("last_used_ip"):
+                continue
+            observation = token_metadata(metadata)
+            observation["observed_at"] = record["timestamp"]
+            observation["observation_kind"] = record["kind"]
+            observations.append(observation)
+        return {
+            "recently_used_token_count": sum(row["recently_used"] for row in rows),
+            "tokens": rows[:100],
+            "tokens_total": len(rows),
+            "tokens_truncated": len(rows) > 100,
+            "ip_observations": observations[:100],
+            "ip_observations_total": len(observations),
+            "ip_observations_truncated": len(observations) > 100,
+            "retention_days": self.retention_days,
+        }

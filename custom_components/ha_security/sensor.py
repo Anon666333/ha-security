@@ -6,7 +6,8 @@ from homeassistant.helpers import entity_registry as er
 from .const import DOMAIN
 
 METRICS = ("refresh_tokens", "last_token_use", "last_service_call",
-           "recently_observed", "known_ip_count", "new_observation_count")
+           "recently_observed", "known_ip_count", "new_observation_count",
+           "recently_used_tokens")
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -69,7 +70,7 @@ class UserTokenSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{user_id}_{metric}"
         if metric in ("last_token_use", "last_service_call"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        if metric == "refresh_tokens":
+        if metric in ("refresh_tokens", "recently_used_tokens"):
             self._attr_native_unit_of_measurement = "tokens"
 
     @property
@@ -91,6 +92,8 @@ class UserTokenSensor(SensorEntity):
     def native_value(self):
         if not self.available:
             return None
+        if self.metric == "recently_used_tokens":
+            return self._activity["recently_used_token_count"]
         if self.metric != "refresh_tokens":
             value = self.monitor.user_summary(self.user_id)[self.metric]
             if self.metric == "recently_observed":
@@ -99,6 +102,14 @@ class UserTokenSensor(SensorEntity):
         return sum(
             token["user_id"] == self.user_id
             for token in self.monitor.snapshot["tokens"]
+        )
+
+    @property
+    def _activity(self):
+        tokens = [row for row in self.monitor.snapshot["tokens"]
+                  if row["user_id"] == self.user_id]
+        return self.monitor.history.token_activity(
+            self.user_id, tokens, self.monitor.recent_minutes,
         )
 
     @property
@@ -114,6 +125,13 @@ class UserTokenSensor(SensorEntity):
             "ha_security_metric": self.metric,
             "recent_window_minutes": self.monitor.recent_minutes,
         }
+        if self.metric == "recently_used_tokens":
+            attributes.update({
+                "meaning": "Credentials used within the recent window; live connections are not observed",
+                "retention_days": self.monitor.history.retention_days,
+            })
+            if self.monitor.expose_network:
+                attributes.update(self._activity)
         if self.metric == "refresh_tokens":
             summary = self.monitor.user_summary(self.user_id)
             attributes.update({
