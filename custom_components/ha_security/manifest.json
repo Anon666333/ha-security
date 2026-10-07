@@ -2,6 +2,8 @@
   "domain": "ha_security",
   "name": "HA Security",
   "version": "0.1.0",
+  "config_flow": true,
+  "single_config_entry": true,
   "codeowners": ["@Anon666333"],
   "documentation": "https://github.com/Anon666333/ha-security",
   "issue_tracker": "https://github.com/Anon666333/ha-security/issues",

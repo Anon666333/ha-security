@@ -20,7 +20,7 @@ record IDs. Unchanged scans stay quiet. Failed scans retain the latest successfu
 snapshot and retry at the next interval. Polling is cancelled at HA shutdown.
 
 No credentials are created, changed, or revoked. No browser fingerprinting,
-auth-store file reads, monkey patches, sensors, UI, or activity/session
+auth-store file reads, monkey patches, sensors, dashboards, or activity/session
 classification are included. Only explicitly selected metadata enters snapshots;
 raw token values, JWT keys, credential objects, and auth-object representations
 are never logged or retained by this integration.
@@ -29,19 +29,16 @@ are never logged or retained by this integration.
 
 1. Copy the whole `custom_components/ha_security` folder into
    `/config/custom_components/ha_security` on your Home Assistant instance.
-2. Add this to `configuration.yaml` (merge with any existing logger section):
-
-```yaml
-ha_security:
-  scan_interval: 300  # seconds; minimum 30, default 300
-
-logger:
-  logs:
-    custom_components.ha_security: debug
-```
-
-3. Check your configuration and restart Home Assistant.
-4. Inspect Settings → System → Logs or `home-assistant.log` for the auth
+2. Restart Home Assistant so it discovers the custom integration.
+3. Open Settings → Devices & services → Add Integration → **HA Security**.
+4. Choose a polling interval (seconds; minimum 30, default 300) and submit.
+   Only one HA Security instance can be configured.
+5. Use the integration's **Configure** options to change the interval later.
+   Changes reload the monitor automatically.
+6. For detailed metadata, use **Enable debug logging** from the integration's
+   menu. Disable it after your investigation; Home Assistant offers the debug
+   log for download.
+7. Inspect Settings → System → Logs or `home-assistant.log` for the auth
    inventory and metadata records.
 
 Metadata includes personal information (names, client URLs, IPs, timestamps).
@@ -50,8 +47,10 @@ DEBUG stops detailed logging; HA log files already written follow your existing
 log retention. Snapshots are in memory only, accessible internally through
 `hass.data["ha_security"].snapshot`; no service or public endpoint exposes them.
 
-To remove it, delete the YAML configuration and restart, then remove the folder.
-YAML reload/config-entry unloading is not supported in v0.1.
+No YAML is required for setup or logging. If you tested the earlier YAML draft,
+remove its `ha_security:` block before restarting and adding the integration.
+To remove it, delete the entry from Devices & services; polling and listeners
+are cleaned up. You can then remove the custom integration folder.
 
 ## What the metadata means
 
@@ -74,7 +73,8 @@ and [auth models](https://github.com/home-assistant/core/blob/dev/homeassistant/
 ## Development and validation
 
 `auth_monitor.py` is the read-only adapter; `monitor.py` handles snapshots and
-change logging; `__init__.py` owns YAML configuration and polling lifecycle.
+change logging; `config_flow.py` owns UI setup/options; `__init__.py` owns
+config-entry setup, reload, and unload lifecycle.
 Future session/activity logic can consume detached snapshots without reading
 credential secrets.
 
