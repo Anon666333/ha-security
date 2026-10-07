@@ -188,6 +188,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defaults["retention_days"], 30)
         self.assertEqual(defaults["recent_minutes"], 15)
         self.assertFalse(defaults["expose_network"])
+        self.assertFalse(defaults["enrich_ip"])
         for field, invalid in (("retention_days", 0), ("retention_days", 366),
                                ("recent_minutes", 0), ("recent_minutes", 1441)):
             with self.assertRaises(vol.Invalid):
@@ -198,7 +199,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         register.reset_mock()
         await self.module.async_setup_entry(self.hass, self.entry)
         registered = {item.args[2]: item for item in register.call_args_list}
-        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now"})
+        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now", "set_token_label"})
         for item in registered.values():
             self.assertEqual(item.kwargs["supports_response"], "only")
         response = await registered["scan_now"].args[3](SimpleNamespace(data={}))
@@ -207,6 +208,11 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["users"], [])
         response = await registered["query_audit"].args[3](SimpleNamespace(data={"kind": "baseline_initialized"}))
         self.assertEqual(response["total"], 1)
+        monitor = self.hass.data["ha_security"]
+        monitor.history.previous = {"record-a": {"user_id": "u"}}
+        response = await registered["set_token_label"].args[3](SimpleNamespace(data={"token_id": "record-a", "label": "Phone"}))
+        self.assertEqual(response, {"success": True})
+        self.assertEqual(monitor.history.token_labels["record-a"], "Phone")
 
     async def test_service_subscription_and_shutdown_flush(self):
         await self.module.async_setup_entry(self.hass, self.entry)
@@ -231,7 +237,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
             await self.module.async_setup_entry(self.hass, self.entry)
         self.assertNotIn("ha_security", self.hass.data)
         self.cancel.assert_called_once()
-        self.assertEqual(self.hass.services.async_remove.call_count, 3)
+        self.assertEqual(self.hass.services.async_remove.call_count, 4)
 
     async def test_storage_batches_without_indefinite_deferral(self):
         await self.module.async_setup_entry(self.hass, self.entry)

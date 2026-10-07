@@ -45,3 +45,17 @@ get_inventory:
 scan_now:
   name: Scan authentication now
   description: Refresh the inventory immediately without restarting. Administrator access required.
+set_token_label:
+  name: Name credential
+  description: Give a token record a friendly label. Empty label clears it. Requires admin access and a response.
+  fields:
+    token_id:
+      name: Token record ID
+      required: true
+      selector:
+        text:
+    label:
+      name: Friendly label
+      required: true
+      selector:
+        text:

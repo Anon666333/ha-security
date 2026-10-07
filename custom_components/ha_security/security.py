@@ -73,6 +73,8 @@ class SecurityHistory:
         self.known_ips = data.get("known_ips", {})
         self.known_clients = data.get("known_clients", {})
         self.last_calls = data.get("last_calls", {})
+        self.token_labels = data.get("token_labels", {})
+        self.ip_context = data.get("ip_context", {})
         self.prune()
 
     def prune(self, now=None):
@@ -92,6 +94,10 @@ class SecurityHistory:
         self.last_calls = {
             uid: row for uid, row in self.last_calls.items()
             if (parse_time(row.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+        }
+        self.ip_context = {
+            ip: row for ip, row in self.ip_context.items()
+            if (parse_time(row.get("looked_up_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
         }
 
     def add(self, kind, user_id=None, now=None, **metadata):
@@ -181,7 +187,22 @@ class SecurityHistory:
             "records": self.records, "previous": self.previous,
             "known_ips": self.known_ips, "known_clients": self.known_clients,
             "last_calls": self.last_calls,
+            "token_labels": self.token_labels, "ip_context": self.ip_context,
         }
+
+    def set_token_label(self, token_id, label):
+        known = set(self.previous or {}) | set(self.token_labels) | {
+            row.get("metadata", {}).get("token_id") for row in self.records
+        }
+        if token_id not in known:
+            raise ValueError("Unknown token record ID")
+        label = label.strip()
+        if label:
+            if token_id not in self.token_labels and len(self.token_labels) >= 1000:
+                raise ValueError("Credential label limit reached")
+            self.token_labels[token_id] = label[:128]
+        else:
+            self.token_labels.pop(token_id, None)
 
     def summary(self, user_id, tokens, recent_minutes=15, now=None):
         now = now or utcnow()
@@ -239,6 +260,37 @@ class SecurityHistory:
             observation["observed_at"] = record["timestamp"]
             observation["observation_kind"] = record["kind"]
             observations.append(observation)
+        from .network import ip_scope
+        current_ids = {row["token_id"] for row in rows}
+        removed = {}
+        for record in reversed(self.records):
+            observation = record.get("metadata")
+            if record.get("user_id") != user_id or not isinstance(observation, dict):
+                continue
+            tid = observation["token_id"]
+            if tid not in current_ids and tid not in removed:
+                removed[tid] = {**observation, "recently_used": False, "expired": False}
+        for row in rows + list(removed.values()):
+            tid = row["token_id"]
+            row["label"] = self.token_labels.get(tid) or row.get("client_name") or row.get("client_id") or "Unknown client"
+            row["credential_status"] = "removed" if tid in removed else "expired" if row["expired"] else "present"
+            row["activity"] = "removed" if tid in removed else "expired" if row["expired"] else "recently_used" if row["recently_used"] else "outside_window" if row.get("last_used_at") else "never_observed"
+            row["ip_scope"] = ip_scope(row.get("last_used_ip"))
+            row["ip_context"] = self.ip_context.get(row.get("last_used_ip"), {})
+            relevant = [item for item in observations if item["token_id"] == tid]
+            row["ip_changed"] = len({item["last_used_ip"] for item in relevant}) > 1
+            row["new_credential"] = any(record["kind"] == "new_token" and record.get("metadata", {}).get("token_id") == tid for record in self.records)
+            evidence = [record for record in self.records if record.get("user_id") == user_id
+                        and (record.get("metadata", {}).get("token_id") == tid or record.get("token_id") == tid)]
+            row["first_observed_at"] = evidence[0]["timestamp"] if evidence else None
+            row["removed_at"] = next((record["timestamp"] for record in reversed(evidence)
+                                      if record["kind"] == "token_removed"), None)
+            row["new_ip"] = any(record["kind"] == "new_ip" and record.get("token_id") == tid
+                                and record.get("value") == row.get("last_used_ip") for record in self.records)
+        for observation in observations:
+            observation["label"] = self.token_labels.get(observation["token_id"]) or observation.get("client_name") or observation.get("client_id") or "Unknown client"
+            observation["ip_context"] = self.ip_context.get(observation["last_used_ip"], {})
+        connections = rows + list(removed.values())
         return {
             "recently_used_token_count": sum(row["recently_used"] for row in rows),
             "tokens": rows[:100],
@@ -248,4 +300,7 @@ class SecurityHistory:
             "ip_observations_total": len(observations),
             "ip_observations_truncated": len(observations) > 100,
             "retention_days": self.retention_days,
+            "connections": connections[:100],
+            "connections_total": len(connections),
+            "connections_truncated": len(connections) > 100,
         }
