@@ -1,0 +1,213 @@
+"""Pure security observation model, retention, and allowlisted audit history."""
+
+from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
+import ipaddress
+import json
+import re
+from urllib.parse import urlsplit, urlunsplit
+import uuid
+
+from .const import AUDIT_LIMIT
+
+
+def utcnow():
+    return datetime.now(timezone.utc)
+
+
+def parse_time(value):
+    try:
+        result = datetime.fromisoformat(value)
+        return result if result.tzinfo else None
+    except (ValueError, TypeError):
+        return None
+
+
+def safe_client(value):
+    """Strip URL credentials/query/fragment; client identity is still untrusted."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parts = urlsplit(value)
+        if parts.scheme and parts.netloc:
+            host = parts.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parts.port:
+                host += f":{parts.port}"
+            return urlunsplit((parts.scheme, host, parts.path, "", ""))[:512]
+        return value.split("?", 1)[0].split("#", 1)[0][:512]
+    except ValueError:
+        return None
+
+
+def safe_ip(value):
+    try:
+        return str(ipaddress.ip_address(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def token_metadata(token):
+    """Only metadata is persisted; token ID is a record ID, not a credential."""
+    return {
+        key: token.get(key) for key in (
+            "token_id", "user_id", "created_at", "last_used_at", "token_type",
+            "expire_at", "access_token_expiration_seconds",
+        )
+    } | {
+        "client_id": safe_client(token.get("client_id")),
+        "client_name": (token.get("client_name") or "")[:128] or None,
+        "last_used_ip": safe_ip(token.get("last_used_ip")),
+    }
+
+
+class SecurityHistory:
+    """Bounded local history and first-observed baselines across restarts."""
+
+    def __init__(self, retention_days=30, data=None):
+        self.retention_days = retention_days
+        data = data or {}
+        self.records = data.get("records", [])
+        self.previous = data.get("previous")
+        self.known_ips = data.get("known_ips", {})
+        self.known_clients = data.get("known_clients", {})
+        self.last_calls = data.get("last_calls", {})
+        self.prune()
+
+    def prune(self, now=None):
+        cutoff = (now or utcnow()) - timedelta(days=self.retention_days)
+        self.records = [
+            row for row in self.records
+            if (parse_time(row.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+        ][-AUDIT_LIMIT:]
+        for collection in (self.known_ips, self.known_clients):
+            for uid in list(collection):
+                collection[uid] = {
+                    value: stamp for value, stamp in collection[uid].items()
+                    if (parse_time(stamp) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+                }
+                if not collection[uid]:
+                    del collection[uid]
+        self.last_calls = {
+            uid: row for uid, row in self.last_calls.items()
+            if (parse_time(row.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
+        }
+
+    def add(self, kind, user_id=None, now=None, **metadata):
+        self.records.append({
+            "id": uuid.uuid4().hex, "timestamp": (now or utcnow()).isoformat(),
+            "kind": kind, "user_id": user_id, **metadata,
+        })
+        self.prune(now)
+
+    def observe(self, snapshot, now=None):
+        now = now or utcnow()
+        self.prune(now)
+        current = {row["token_id"]: token_metadata(row) for row in snapshot["tokens"]}
+        baseline = self.previous is None
+        old = self.previous or {}
+        if baseline:
+            self.add("baseline_initialized", now=now,
+                     user_count=len(snapshot["users"]), token_count=len(current))
+        for tid, row in current.items():
+            uid = row["user_id"]
+            if tid not in old:
+                self.add("token_baseline" if baseline else "new_token", uid, now,
+                         metadata=row)
+            elif old[tid] != row:
+                self.add("token_updated", uid, now, metadata=row)
+            for key, collection, kind in (
+                ("last_used_ip", self.known_ips, "new_ip"),
+                ("client_id", self.known_clients, "new_client"),
+            ):
+                value = row.get(key)
+                if value:
+                    known = collection.setdefault(uid, {})
+                    is_new = value not in known
+                    known[value] = now.isoformat()
+                    # Bound baseline memory even with hostile metadata.
+                    while len(known) > 1000:
+                        del known[next(iter(known))]
+                    if is_new and not baseline:
+                        self.add(kind, uid, now, value=value, token_id=tid)
+        for tid in old.keys() - current.keys():
+            self.add("token_removed", old[tid]["user_id"], now, token_id=tid)
+        self.previous = current
+
+    def service_call(self, data, context, now=None):
+        """Record an invocation attributed by HA context, not its outcome."""
+        uid = getattr(context, "user_id", None)
+        if not uid:
+            return False
+        payload = data.get("service_data") or {}
+        targets = payload.get("entity_id", []) if isinstance(payload, Mapping) else []
+        if isinstance(targets, str):
+            targets = targets.split(",")
+        if not isinstance(targets, (list, tuple)):
+            targets = []
+        metadata = {
+            "domain": str(data.get("domain", ""))[:64],
+            "service": str(data.get("service", ""))[:64],
+            "entity_ids": [
+                v for v in targets[:50]
+                if isinstance(v, str) and len(v) <= 255
+                and re.fullmatch(r"[a-z0-9_]+\.[a-z0-9_]+", v)
+            ],
+            "context_id": getattr(context, "id", None),
+            "parent_id": getattr(context, "parent_id", None),
+            "outcome": "not_observed",
+        }
+        self.add("service_call", uid, now, **metadata)
+        self.last_calls[uid] = self.records[-1]
+        return True
+
+    def query(self, text="", user_id=None, kind=None, since=None, until=None,
+              limit=100, offset=0):
+        self.prune()
+        rows = [
+            row for row in reversed(self.records)
+            if (not user_id or row["user_id"] == user_id)
+            and (not kind or row["kind"] == kind)
+            and (not since or row["timestamp"] >= since)
+            and (not until or row["timestamp"] <= until)
+            and (not text or text.casefold() in json.dumps(row).casefold())
+        ]
+        return {"total": len(rows), "records": rows[offset:offset + limit]}
+
+    def serialize(self):
+        self.prune()
+        return {
+            "records": self.records, "previous": self.previous,
+            "known_ips": self.known_ips, "known_clients": self.known_clients,
+            "last_calls": self.last_calls,
+        }
+
+    def summary(self, user_id, tokens, recent_minutes=15, now=None):
+        now = now or utcnow()
+        candidates = []
+        for token in tokens:
+            stamp = parse_time(token.get("last_used_at"))
+            if stamp and stamp <= now:
+                candidates.append((stamp, token))
+        latest = max(candidates, key=lambda item: item[0]) if candidates else None
+        call = self.last_calls.get(user_id)
+        activity = [latest[0]] if latest else []
+        if call and (stamp := parse_time(call["timestamp"])) and stamp <= now:
+            activity.append(stamp)
+        last_observed = max(activity) if activity else None
+        return {
+            "last_token_use": latest[0] if latest else None,
+            "last_service_call": parse_time(call["timestamp"]) if call else None,
+            "recently_observed": bool(last_observed and now - last_observed <= timedelta(minutes=recent_minutes)),
+            "latest_ip": safe_ip(latest[1].get("last_used_ip")) if latest else None,
+            "latest_client": (
+                safe_client(latest[1].get("client_id"))
+                or (latest[1].get("client_name") or "")[:128] or None
+            ) if latest else None,
+            "known_ip_count": len(self.known_ips.get(user_id, {})),
+            "new_observation_count": sum(
+                row["user_id"] == user_id and row["kind"] in ("new_ip", "new_client", "new_token")
+                for row in self.records
+            ),
+        }

@@ -6,6 +6,10 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    CONF_RETENTION_DAYS, CONF_RECENT_MINUTES, CONF_EXPOSE_NETWORK,
+    DEFAULT_RETENTION_DAYS, DEFAULT_RECENT_MINUTES,
+)
 
 
 def interval_schema(default):
@@ -13,6 +17,18 @@ def interval_schema(default):
     return vol.Schema({
         vol.Required(CONF_SCAN_INTERVAL, default=default):
             vol.All(int, vol.Range(min=30)),
+    })
+
+
+def settings_schema(settings):
+    return vol.Schema({
+        vol.Required(CONF_SCAN_INTERVAL, default=settings.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)):
+            vol.All(int, vol.Range(min=30)),
+        vol.Optional(CONF_RETENTION_DAYS, default=settings.get(CONF_RETENTION_DAYS, DEFAULT_RETENTION_DAYS)):
+            vol.All(int, vol.Range(min=1, max=365)),
+        vol.Optional(CONF_RECENT_MINUTES, default=settings.get(CONF_RECENT_MINUTES, DEFAULT_RECENT_MINUTES)):
+            vol.All(int, vol.Range(min=1, max=1440)),
+        vol.Optional(CONF_EXPOSE_NETWORK, default=settings.get(CONF_EXPOSE_NETWORK, False)): bool,
     })
 
 
@@ -27,14 +43,14 @@ class SecurityConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             try:
-                data = interval_schema(DEFAULT_SCAN_INTERVAL)(user_input)
+                data = settings_schema({})(user_input)
             except vol.Invalid:
-                errors["scan_interval"] = "invalid_interval"
+                errors["base"] = "invalid_settings"
             else:
                 return self.async_create_entry(title="HA Security", data=data)
         return self.async_show_form(
             step_id="user",
-            data_schema=interval_schema(DEFAULT_SCAN_INTERVAL),
+            data_schema=settings_schema({}),
             errors=errors,
         )
 
@@ -51,18 +67,16 @@ class SecurityOptionsFlow(config_entries.OptionsFlow):
         self._entry = entry
 
     async def async_step_init(self, user_input=None):
-        default = self._entry.options.get(
-            CONF_SCAN_INTERVAL,
-            self._entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
         errors = {}
         if user_input is not None:
             try:
-                data = interval_schema(default)(user_input)
+                data = settings_schema({**self._entry.data, **self._entry.options})(user_input)
             except vol.Invalid:
-                errors["scan_interval"] = "invalid_interval"
+                errors["base"] = "invalid_settings"
             else:
                 return self.async_create_entry(title="", data=data)
         return self.async_show_form(
-            step_id="init", data_schema=interval_schema(default), errors=errors,
+            step_id="init",
+            data_schema=settings_schema({**self._entry.data, **self._entry.options}),
+            errors=errors,
         )

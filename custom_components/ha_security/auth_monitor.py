@@ -5,6 +5,7 @@ Only explicitly selected fields cross this boundary; never serialize auth object
 
 from datetime import datetime, timedelta
 from typing import Any
+from .security import safe_client, safe_ip
 
 
 def _metadata(value: Any) -> Any:
@@ -36,7 +37,11 @@ async def async_snapshot(auth: Any) -> dict[str, list[dict[str, Any]]]:
                 "user_id": user.id,
                 "user_name": _metadata(user.name),
                 **{
-                    field: _metadata(getattr(token, field, None))
+                    field: (
+                        safe_client(getattr(token, field, None)) if field == "client_id"
+                        else safe_ip(getattr(token, field, None)) if field == "last_used_ip"
+                        else _metadata(getattr(token, field, None))
+                    )
                     for field in (
                         "client_id", "client_name", "created_at",
                         "last_used_at", "last_used_ip", "token_type", "expire_at",

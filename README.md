@@ -2,7 +2,107 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.2
+## v0.1.3 MVP
+
+The MVP combines authentication inventory, new IP/client/token observations,
+user-context service-call auditing, per-user entities, a native Lovelace dashboard
+template, and searchable local history.
+
+### Per-user security entities
+
+Each user gets six sensors: refresh-token count, last recorded token use, last
+attributed service call, recently observed status, known IP count, and new
+IP/client/token observation count in retained history. Existing refresh-token
+sensor unique IDs are preserved.
+
+Configure the recent observation window (default 15 minutes) and audit retention
+(default 30 days, range 1–365) through the integration's Configure dialog.
+Recent status combines token-use timestamps and captured service invocations;
+it updates on scans and service events. It can lag expiry by up to one scan
+interval. A service event carrying a user context may come from an automation
+or script inheriting that context, rather than a direct click.
+
+### Search and inspect without logs or restarts
+
+Under Developer tools → Actions, choose:
+
+- **HA Security: Get authentication inventory** for safe user/token metadata.
+- **HA Security: Search audit history** for text, user ID, event kind, result
+  limit (maximum 500), and pagination offset. Results are newest first.
+- **HA Security: Scan authentication now** to trigger an immediate scan.
+
+These actions return response data. Request/display the action response; in an
+automation use a `response_variable`. They use HA's admin-service guard
+(administrator users or trusted internal automation contexts).
+
+Example search action:
+
+```yaml
+action: ha_security.query_audit
+data:
+  text: light
+  kind: service_call
+  limit: 100
+response_variable: security_audit
+```
+
+The service audit stores timestamp, attributed user ID, domain/service,
+explicit entity targets, and context/parent IDs. It records invocations, not
+confirmed success, authorization outcome, or human intent. Calls without a
+user context are skipped. No full service payloads, messages, passwords,
+access/refresh token values, or signing keys are stored.
+
+### First-observed IPs and clients
+
+The first successful scan establishes a baseline; existing grants/IPs/clients
+are not flagged as new. Subsequent new records produce `new_token`, `new_ip`,
+and `new_client` events. Token metadata changes and removals are also audited.
+Baselines survive restarts. Client IDs and IPs are observations, not physical
+device identities or geolocation; shared browser clients, proxies, and VPNs
+limit attribution. An IP/client absent beyond the retention window may be
+reported as newly observed when it returns. Polling can miss transient grants.
+
+### Local audit storage
+
+History uses HA's storage helper in `/config/.storage/ha_security.audit`.
+Retention runs on scans, events, queries, and saves. At most 10,000 audit rows
+are retained even if younger than the configured retention period. Current
+token baseline metadata and known-observation maps are separate from those
+rows; they support change detection across restarts. Writes are delayed by
+5 seconds to batch changes and flushed on orderly unload/shutdown, so abrupt
+power loss can lose the latest batch. This is a local operational audit, not a
+tamper-proof security log. It is included in normal HA configuration backups.
+Removing the integration stops auditing but leaves this file for recovery.
+For permanent deletion, remove the integration, then delete that specific file.
+
+Client URLs have user information, query strings, and fragments stripped.
+Names, client labels, IPs, and timestamps remain personal metadata.
+**Expose latest IP/client on entities** is off by default. Enabling it makes
+those attributes available to users with entity access and to Recorder/history;
+an admin-only dashboard does not change entity access permissions.
+
+### Lovelace Security dashboard
+
+Use [dashboards/security.yaml](dashboards/security.yaml). Create a new dashboard
+in Settings → Dashboards, choose administrator-only access, take control if
+needed, and paste the file into its raw configuration editor. The template uses
+native Markdown cards and automatically discovers HA Security user sensors;
+no custom dashboard cards or fixed entity names are required.
+
+The dashboard shows counts/status/timestamps and optional source metadata.
+Search lives in the admin Actions interface; a dedicated interactive audit
+table is not part of this MVP. The dashboard is provided separately and is
+never automatically installed or overwritten.
+
+### Validation checklist
+
+After updating via HACS and restarting Core, verify the six sensors per user,
+run Scan authentication now and Get authentication inventory, make a harmless
+user-attributed service call, then search for that event. Check options reload,
+history preservation across restart, and non-admin denial of audit actions.
+Only the earlier inventory/logging version has been validated on the user's
+live HA instance; MVP storage, sensors, service auditing, and dashboard still
+require validation on the real target.
 
 Each discovered user gets a refresh-token-count sensor, including system and
 inactive users and users with zero tokens. The HA user ID provides a stable
@@ -12,7 +112,7 @@ existing sensors unavailable, retain the previous snapshot, and recover on
 the next successful scan.
 
 Sensor attributes include active/owner/system status and last successful scan.
-Token details and IP addresses remain excluded from entities. Token counts
+Token secrets remain excluded from entities. Token counts
 represent stored credential grants, not online sessions. Home Assistant may
 record count/status/timestamp history according to your Recorder settings.
 
@@ -34,7 +134,7 @@ Failed scans retain the latest successful
 snapshot and retry at the next interval. Polling is cancelled at HA shutdown.
 
 No credentials are created, changed, or revoked. No browser fingerprinting,
-auth-store file reads, monkey patches, dashboards, or activity/session
+auth-store file reads, monkey patches, or confirmed online-session
 classification are included. Only explicitly selected metadata enters snapshots;
 raw token values, JWT keys, credential objects, and auth-object representations
 are never logged or retained by this integration.
@@ -85,8 +185,9 @@ must also add HA Security under Devices & services.
 Metadata includes personal information (names, client URLs, IPs, timestamps).
 Enable DEBUG only while investigating and protect any collected logs. Disabling
 DEBUG stops detailed logging; HA log files already written follow your existing
-log retention. Snapshots are in memory only, accessible internally through
-`hass.data["ha_security"].snapshot`; no service or public endpoint exposes them.
+log retention. The live snapshot is accessible internally through
+`hass.data["ha_security"].snapshot`; safe metadata is also available through the
+admin inventory action and the persisted local audit baseline.
 
 No YAML is required for setup or logging. If you tested the earlier YAML draft,
 remove its `ha_security:` block before restarting and adding the integration.
@@ -120,7 +221,7 @@ Future session/activity logic can consume detached snapshots without reading
 credential secrets.
 
 ```shell
-python -m pip install voluptuous==0.16.0
+python -m pip install voluptuous==0.16.0 PyYAML Jinja2
 python -m unittest discover -s tests -v
 python -m compileall -q custom_components
 ```

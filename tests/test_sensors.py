@@ -1,6 +1,7 @@
 """Sensor behavior and discovery tests with a stub HA entity platform."""
 
 import importlib
+from datetime import datetime, timezone
 import sys
 from types import ModuleType, SimpleNamespace
 import unittest
@@ -31,6 +32,7 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         ):
             modules[name] = ModuleType(name)
         modules["homeassistant.components.sensor"].SensorEntity = Entity
+        modules["homeassistant.components.sensor"].SensorDeviceClass = SimpleNamespace(TIMESTAMP="timestamp")
         self.registry = SimpleNamespace(
             async_get=Mock(return_value=None), async_remove=Mock(),
         )
@@ -49,9 +51,9 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         identity = entity._attr_unique_id
         self.assertEqual(entity.native_value, 1)
         self.assertTrue(entity.available)
-        self.assertEqual(set(entity.extra_state_attributes), {
-            "is_active", "is_owner", "system_generated", "last_successful_scan",
-        })
+        self.assertNotIn("latest_ip", entity.extra_state_attributes)
+        self.assertNotIn("latest_client", entity.extra_state_attributes)
+        self.assertIn("recently_observed", entity.extra_state_attributes)
         self.account.name = "Renamed"
         self.account.refresh_tokens.clear()
         await self.monitor.async_refresh()
@@ -76,18 +78,30 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         def add(new):
             for entity in new:
                 entity.hass = hass
-                entity.entity_id = "sensor." + entity.user_id
+                entity.entity_id = "sensor." + entity.user_id + "_" + entity.metric
                 entities.append(entity)
         await self.module.async_setup_entry(hass, entry, add)
-        self.assertEqual(len(entities), 1)
+        self.assertEqual(len(entities), 6)
         extra = user()
         extra.id = "second"
         self.auth.async_get_users.return_value = [self.account, extra]
         await self.monitor.async_refresh()
-        self.assertEqual(len(entities), 2)
-        self.assertEqual(entities[1].native_value, 0)
+        self.assertEqual(len(entities), 12)
+        self.assertEqual(entities[6].native_value, 0)
         self.auth.async_get_users.return_value = [extra]
         await self.monitor.async_refresh()
         self.assertTrue(entities[0].removed)
         cleanups[0]()
         self.assertEqual(self.monitor.listeners, [])
+
+    async def test_network_opt_in_and_timestamp_sensor(self):
+        self.account.refresh_tokens["record"].last_used_at = datetime.now(timezone.utc)
+        self.account.refresh_tokens["record"].last_used_ip = "192.0.2.1"
+        await self.monitor.async_refresh()
+        self.monitor.expose_network = True
+        entity = self.module.UserTokenSensor(self.monitor, self.account.id)
+        self.assertEqual(entity.extra_state_attributes["latest_ip"], "192.0.2.1")
+        recent = self.module.UserTokenSensor(self.monitor, self.account.id, "recently_observed")
+        self.assertEqual(recent.native_value, "recently_observed")
+        stamp = self.module.UserTokenSensor(self.monitor, self.account.id, "last_token_use")
+        self.assertIsNotNone(stamp.native_value.tzinfo)
