@@ -101,3 +101,26 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
     def test_url_sanitization(self):
         self.assertEqual(safe_client("https://u:p@host.test:8123/app?secret=x#y"),
                          "https://host.test:8123/app")
+
+    def test_token_activity_multiple_ips_restart_removal_and_expiry(self):
+        now = utcnow()
+        history = SecurityHistory()
+        rows = [{"token_id": "a", "user_id": "u", "last_used_at": now.isoformat(),
+                 "last_used_ip": "192.0.2.1", "client_id": "mobile"},
+                {"token_id": "b", "user_id": "u", "last_used_at": now.isoformat(),
+                 "last_used_ip": "192.0.2.2", "client_id": "web"}]
+        history.observe({"users": [], "tokens": rows}, now)
+        self.assertEqual(history.token_activity("u", rows, now=now)["recently_used_token_count"], 2)
+        rows[0]["last_used_ip"] = "192.0.2.3"
+        history.observe({"users": [], "tokens": rows}, now)
+        history = SecurityHistory(data=json.loads(json.dumps(history.serialize())))
+        history.observe({"users": [], "tokens": []}, now)
+        detail = history.token_activity("u", [], now=now)
+        self.assertEqual(detail["recently_used_token_count"], 0)
+        self.assertEqual({row["last_used_ip"] for row in detail["ip_observations"]},
+                         {"192.0.2.1", "192.0.2.2", "192.0.2.3"})
+        rows[0]["expire_at"] = now.timestamp() - 1
+        rows[1]["last_used_at"] = (now + timedelta(minutes=1)).isoformat()
+        self.assertEqual(history.token_activity("u", rows, now=now)["recently_used_token_count"], 0)
+        history.prune(now + timedelta(days=31))
+        self.assertEqual(history.token_activity("u", [], now=now)["ip_observations"], [])

@@ -2,11 +2,13 @@
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 
 METRICS = ("refresh_tokens", "last_token_use", "last_service_call",
-           "recently_observed", "known_ip_count", "new_observation_count")
+           "recently_observed", "known_ip_count", "new_observation_count",
+           "recently_used_tokens")
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -14,10 +16,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     monitor = hass.data[DOMAIN]
     entities = {}
     registry = er.async_get(hass)
+    devices = dr.async_get(hass)
 
     async def reconcile():
         if monitor.last_scan_success:
             users = {row["user_id"]: row for row in monitor.snapshot["users"]}
+            for uid, user in users.items():
+                devices.async_get_or_create(
+                    config_entry_id=entry.entry_id,
+                    identifiers={(DOMAIN, f"user_{uid}")},
+                    name=user["name"] or uid,
+                    manufacturer="Home Assistant",
+                    model="User account",
+                    entry_type=dr.DeviceEntryType.SERVICE,
+                )
             expected = {f"{DOMAIN}_{uid}_{metric}" for uid in users for metric in METRICS}
             for record in er.async_entries_for_config_entry(registry, entry.entry_id):
                 if (
@@ -48,6 +60,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         additions.append(entity)
             if additions:
                 async_add_entities(additions)
+            expected_devices = {(DOMAIN, f"user_{uid}") for uid in users}
+            for device in dr.async_entries_for_config_entry(devices, entry.entry_id):
+                owned = {identifier for identifier in device.identifiers
+                         if identifier[0] == DOMAIN and identifier[1].startswith("user_")}
+                if owned and not owned.intersection(expected_devices):
+                    if hasattr(devices, "async_remove_device"):
+                        devices.async_remove_device(device.id)
+                    else:
+                        # Older HA registries permit devices shared by config entries.
+                        devices.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
         for entity in entities.values():
             if entity.hass is not None:
                 entity.async_write_ha_state()
@@ -69,7 +91,7 @@ class UserTokenSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{user_id}_{metric}"
         if metric in ("last_token_use", "last_service_call"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        if metric == "refresh_tokens":
+        if metric in ("refresh_tokens", "recently_used_tokens"):
             self._attr_native_unit_of_measurement = "tokens"
 
     @property
@@ -84,6 +106,18 @@ class UserTokenSensor(SensorEntity):
         return f"HA Security {label} {self.metric.replace('_', ' ').capitalize()}"
 
     @property
+    def device_info(self):
+        """Group all metrics by stable HA auth user ID, including after rename."""
+        user = self._user
+        return dr.DeviceInfo(
+            identifiers={(DOMAIN, f"user_{self.user_id}")},
+            name=(user and user["name"]) or self.user_id,
+            manufacturer="Home Assistant",
+            model="User account",
+            entry_type=dr.DeviceEntryType.SERVICE,
+        )
+
+    @property
     def available(self):
         return self.monitor.last_scan_success and self._user is not None
 
@@ -91,6 +125,8 @@ class UserTokenSensor(SensorEntity):
     def native_value(self):
         if not self.available:
             return None
+        if self.metric == "recently_used_tokens":
+            return self._activity["recently_used_token_count"]
         if self.metric != "refresh_tokens":
             value = self.monitor.user_summary(self.user_id)[self.metric]
             if self.metric == "recently_observed":
@@ -99,6 +135,14 @@ class UserTokenSensor(SensorEntity):
         return sum(
             token["user_id"] == self.user_id
             for token in self.monitor.snapshot["tokens"]
+        )
+
+    @property
+    def _activity(self):
+        tokens = [row for row in self.monitor.snapshot["tokens"]
+                  if row["user_id"] == self.user_id]
+        return self.monitor.history.token_activity(
+            self.user_id, tokens, self.monitor.recent_minutes,
         )
 
     @property
@@ -114,6 +158,13 @@ class UserTokenSensor(SensorEntity):
             "ha_security_metric": self.metric,
             "recent_window_minutes": self.monitor.recent_minutes,
         }
+        if self.metric == "recently_used_tokens":
+            attributes.update({
+                "meaning": "Credentials used within the recent window; live connections are not observed",
+                "retention_days": self.monitor.history.retention_days,
+            })
+            if self.monitor.expose_network:
+                attributes.update(self._activity)
         if self.metric == "refresh_tokens":
             summary = self.monitor.user_summary(self.user_id)
             attributes.update({

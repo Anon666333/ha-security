@@ -34,6 +34,24 @@ views:
           No HA Security user sensors found. Add the integration or run Scan authentication now.
           {% endfor %}
       - type: markdown
+        title: Credentials and source IPs
+        content: |
+          {% for entity in states.sensor if entity.attributes.get('ha_security_metric') == 'recently_used_tokens' %}
+          ### {{ entity.name | e }}
+          Recently used credentials: **{{ entity.state | e }}** within {{ entity.attributes.get('recent_window_minutes') }} minutes. This is not a live session count.
+          {% for token in entity.attributes.get('tokens', []) %}
+          - {{ (token.get('client_name') or token.get('client_id') or 'Unknown client') | e }} — IP: {{ (token.get('last_used_ip') or 'Unknown') | e }}; last use: {{ (token.get('last_used_at') or 'Not observed') | e }}; recent: {{ token.get('recently_used') }}; record: {{ token.get('token_id') | e }}
+          {% else %}
+          Enable **Expose IP/client details and retained observations on entities** in integration options to see credential details.
+          {% endfor %}
+          {% for observation in entity.attributes.get('ip_observations', []) %}
+          - Observed {{ observation.get('observed_at') | e }}: {{ observation.get('last_used_ip') | e }} — {{ (observation.get('client_name') or observation.get('client_id') or 'Unknown client') | e }}; record: {{ observation.get('token_id') | e }}; token last use: {{ (observation.get('last_used_at') or 'Unknown') | e }}
+          {% endfor %}
+          {% if entity.attributes.get('ip_observations_truncated') or entity.attributes.get('tokens_truncated') %}
+          Entity details are capped at 100 rows per list. Search the local audit for further retained observations.
+          {% endif %}
+          {% endfor %}
+      - type: markdown
         title: Search the local audit
         content: >-
           Open Developer tools → Actions → HA Security: Search audit history.
