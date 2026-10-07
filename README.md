@@ -198,6 +198,15 @@ are cleaned up. You can then remove the custom integration folder.
 
 ### Per-user credential activity and IP history (v0.1.4)
 
+Each discovered user appears as a **User account** service device under
+HA Security in Devices & services, with all seven security sensors grouped
+under it. Devices use the stable authentication user ID, so account renames
+update the device name without replacing entities. Existing entities retain
+their unique IDs and attach to the user device when loaded after updating.
+Removed users are detached from the integration after a successful scan;
+failed scans retain the existing device grouping. Names customised in HA
+remain under HA's registry controls.
+
 Each user has a **Recently used tokens** sensor. Its state counts currently
 present, non-expired credential grants whose recorded last use is within the
 configured recent observation window. It does not count open browser tabs,

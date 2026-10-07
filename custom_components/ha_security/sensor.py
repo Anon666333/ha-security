@@ -2,6 +2,7 @@
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 
@@ -15,10 +16,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     monitor = hass.data[DOMAIN]
     entities = {}
     registry = er.async_get(hass)
+    devices = dr.async_get(hass)
 
     async def reconcile():
         if monitor.last_scan_success:
             users = {row["user_id"]: row for row in monitor.snapshot["users"]}
+            for uid, user in users.items():
+                devices.async_get_or_create(
+                    config_entry_id=entry.entry_id,
+                    identifiers={(DOMAIN, f"user_{uid}")},
+                    name=user["name"] or uid,
+                    manufacturer="Home Assistant",
+                    model="User account",
+                    entry_type=dr.DeviceEntryType.SERVICE,
+                )
             expected = {f"{DOMAIN}_{uid}_{metric}" for uid in users for metric in METRICS}
             for record in er.async_entries_for_config_entry(registry, entry.entry_id):
                 if (
@@ -49,6 +60,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
                         additions.append(entity)
             if additions:
                 async_add_entities(additions)
+            expected_devices = {(DOMAIN, f"user_{uid}") for uid in users}
+            for device in dr.async_entries_for_config_entry(devices, entry.entry_id):
+                owned = {identifier for identifier in device.identifiers
+                         if identifier[0] == DOMAIN and identifier[1].startswith("user_")}
+                if owned and not owned.intersection(expected_devices):
+                    if hasattr(devices, "async_remove_device"):
+                        devices.async_remove_device(device.id)
+                    else:
+                        # Older HA registries permit devices shared by config entries.
+                        devices.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
         for entity in entities.values():
             if entity.hass is not None:
                 entity.async_write_ha_state()
@@ -83,6 +104,18 @@ class UserTokenSensor(SensorEntity):
         user = self._user
         label = (user and user["name"]) or self.user_id
         return f"HA Security {label} {self.metric.replace('_', ' ').capitalize()}"
+
+    @property
+    def device_info(self):
+        """Group all metrics by stable HA auth user ID, including after rename."""
+        user = self._user
+        return dr.DeviceInfo(
+            identifiers={(DOMAIN, f"user_{self.user_id}")},
+            name=(user and user["name"]) or self.user_id,
+            manufacturer="Home Assistant",
+            model="User account",
+            entry_type=dr.DeviceEntryType.SERVICE,
+        )
 
     @property
     def available(self):
