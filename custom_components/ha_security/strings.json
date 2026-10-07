@@ -1,0 +1,25 @@
+{
+  "title": "HA Security",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HA Security",
+        "description": "Monitor authentication metadata on this Home Assistant instance. Detailed metadata is available when debug logging is enabled.",
+        "data": {"scan_interval": "Polling interval (seconds)"},
+        "data_description": {"scan_interval": "Minimum 30 seconds. Default 300 seconds."}
+      }
+    },
+    "error": {"invalid_interval": "Enter a whole number of at least 30 seconds."},
+    "abort": {"already_configured": "HA Security is already configured."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HA Security options",
+        "data": {"scan_interval": "Polling interval (seconds)"},
+        "data_description": {"scan_interval": "Minimum 30 seconds. Changes restart the monitor."}
+      }
+    },
+    "error": {"invalid_interval": "Enter a whole number of at least 30 seconds."}
+  }
+}
