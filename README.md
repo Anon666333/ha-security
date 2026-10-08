@@ -4,12 +4,20 @@ A standalone Home Assistant custom integration proof-of-concept for read-only au
 
 ## v0.1.6 session dashboard
 
+v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
+annotations, used by HA 2026.9.4. It checks parameter names without evaluating
+HA's type-only imports. Unsupported/error tracking also exposes a safe
+`tracking_reason` in entities and the dashboard, plus a warning in Core logs.
+After updating, restart Core, reload the browser resource with `?v=0.1.7`,
+and reconnect clients after enabling session tracking. If tracking is still
+unsupported, report the diagnostic shown on the dashboard.
+
 ### Install the interactive dashboard
 
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.6`
+- URL: `/ha_security/ha-security-card.js?v=0.1.7`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with
