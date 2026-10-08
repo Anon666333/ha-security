@@ -53,6 +53,27 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.auth = SimpleNamespace(async_get_users=AsyncMock(return_value=[self.account]))
         self.monitor = AuthMonitor(self.auth)
 
+    async def test_login_entities_counts_privacy_and_disabled_coverage(self):
+        from ha_security_unit.risk import record_login
+        await self.monitor.async_refresh()
+        self.monitor.login_status = "observing"
+        record_login(self.monitor.history, "failure", "8.8.8.8")
+        record_login(self.monitor.history, "success", "8.8.8.8", self.account.id, "new")
+        success = self.module.UserTokenSensor(self.monitor, self.account.id, "successful_logins_24h")
+        stamp = self.module.UserTokenSensor(self.monitor, self.account.id, "last_successful_login")
+        risk = self.module.UserTokenSensor(self.monitor, self.account.id, "security_status")
+        self.assertEqual(success.native_value, 1)
+        self.assertIsInstance(stamp.native_value, datetime)
+        self.assertEqual(risk.native_value, "review")
+        self.assertNotIn("source_ip", risk.extra_state_attributes["login_events"][0])
+        self.assertEqual(success.extra_state_attributes["login_events"], [])
+        global_failures = self.module.GlobalLoginSensor(self.monitor, "failed_login_attempts_24h")
+        self.assertEqual(global_failures.native_value, 1)
+        self.monitor.login_status = "unsupported"
+        self.assertFalse(success.available)
+        self.assertIsNone(global_failures.native_value)
+        self.assertEqual(risk.extra_state_attributes["security_status"], "unknown")
+
     async def test_counts_attributes_identity_and_failure_recovery(self):
         await self.monitor.async_refresh()
         entity = self.module.UserTokenSensor(self.monitor, self.account.id)
@@ -89,9 +110,9 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
                 entity.entity_id = "sensor." + getattr(entity, "user_id", "overview") + "_" + getattr(entity, "metric", "overview")
                 entities.append(entity)
         await self.module.async_setup_entry(hass, entry, add)
-        self.assertEqual(len(entities), 10)
-        identifiers = entities[1].device_info["identifiers"]
-        self.assertTrue(all(entity.device_info["identifiers"] == identifiers for entity in entities[1:]))
+        self.assertEqual(len(entities), 17)
+        identifiers = entities[4].device_info["identifiers"]
+        self.assertTrue(all(entity.device_info["identifiers"] == identifiers for entity in entities[4:]))
         self.device_entries = [SimpleNamespace(id="first-device", identifiers=identifiers)]
         self.account.name = "Renamed account"
         await self.monitor.async_refresh()
@@ -100,11 +121,11 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         extra.id = "second"
         self.auth.async_get_users.return_value = [self.account, extra]
         await self.monitor.async_refresh()
-        self.assertEqual(len(entities), 19)
-        self.assertEqual(entities[10].native_value, 0)
+        self.assertEqual(len(entities), 30)
+        self.assertEqual(entities[17].native_value, 0)
         self.auth.async_get_users.return_value = [extra]
         await self.monitor.async_refresh()
-        self.assertTrue(entities[1].removed)
+        self.assertTrue(entities[4].removed)
         self.devices.async_remove_device.assert_called_once_with("first-device")
         cleanups[0]()
         self.assertEqual(self.monitor.listeners, [])

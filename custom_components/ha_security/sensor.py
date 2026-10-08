@@ -5,10 +5,13 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
+from .risk import summary as login_summary, parse_time
+
+LOGIN_METRICS = ("successful_logins_24h", "last_successful_login", "correlated_failed_attempts_24h", "security_status")
 
 METRICS = ("refresh_tokens", "last_token_use", "last_service_call",
            "recently_observed", "known_ip_count", "new_observation_count",
-           "recently_used_tokens", "active_websocket_connections", "session_history_count")
+           "recently_used_tokens", "active_websocket_connections", "session_history_count") + LOGIN_METRICS
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -18,7 +21,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     registry = er.async_get(hass)
     devices = dr.async_get(hass)
     overview = SecurityOverviewSensor(monitor)
-    async_add_entities([overview])
+    global_entities = [GlobalLoginSensor(monitor, metric) for metric in ("successful_logins_24h", "failed_login_attempts_24h", "security_status")]
+    async_add_entities([overview, *global_entities])
 
     async def reconcile():
         if monitor.last_scan_success:
@@ -72,7 +76,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     else:
                         # Older HA registries permit devices shared by config entries.
                         devices.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
-        for entity in (*entities.values(), overview):
+        for entity in (*entities.values(), overview, *global_entities):
             if entity.hass is not None:
                 entity.async_write_ha_state()
 
@@ -91,7 +95,7 @@ class UserTokenSensor(SensorEntity):
         self.user_id = user_id
         self.metric = metric
         self._attr_unique_id = f"{DOMAIN}_{user_id}_{metric}"
-        if metric in ("last_token_use", "last_service_call"):
+        if metric in ("last_token_use", "last_service_call", "last_successful_login"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
         if metric in ("refresh_tokens", "recently_used_tokens"):
             self._attr_native_unit_of_measurement = "tokens"
@@ -121,6 +125,8 @@ class UserTokenSensor(SensorEntity):
 
     @property
     def available(self):
+        if self.metric in LOGIN_METRICS:
+            return self.monitor.login_status == "observing" and self._user is not None
         if self.metric == "active_websocket_connections":
             return self.monitor.sessions.status == "observing" and self._user is not None
         return self.monitor.last_scan_success and self._user is not None
@@ -129,6 +135,9 @@ class UserTokenSensor(SensorEntity):
     def native_value(self):
         if not self.available:
             return None
+        if self.metric in LOGIN_METRICS:
+            value = login_summary(self.monitor.history, self.user_id, self.monitor.login_status, include_events=False)[self.metric]
+            return parse_time(value) if self.metric == "last_successful_login" else value
         if self.metric == "recently_used_tokens":
             return self._activity["recently_used_token_count"]
         if self.metric in ("active_websocket_connections", "session_history_count"):
@@ -167,6 +176,9 @@ class UserTokenSensor(SensorEntity):
             "user_id": self.user_id,
             "user_name": user["name"] or self.user_id,
         }
+        if self.metric in LOGIN_METRICS:
+            attributes.update(login_summary(self.monitor.history, self.user_id, self.monitor.login_status, network=self.monitor.expose_network, include_events=self.metric == "security_status"))
+            attributes.update(login_tracking_reason=self.monitor.login_reason, login_tracking_started_at=self.monitor.login_started_at)
         if self.metric in ("active_websocket_connections", "session_history_count"):
             attributes.update(self.monitor.sessions.view(self.user_id, self.monitor.expose_network))
         if self.metric == "recently_used_tokens":
@@ -216,6 +228,9 @@ class SecurityOverviewSensor(SensorEntity):
     def extra_state_attributes(self):
         users = (self.monitor.snapshot or {}).get("users", [])
         return {
+            "login_tracking_status": self.monitor.login_status,
+            "login_tracking_reason": self.monitor.login_reason,
+            "login_tracking_started_at": self.monitor.login_started_at,
             "ha_security_metric": "overview",
             "users": len(users),
             "connected_websockets": sum(row["state"] == "connected" for row in self.monitor.history.sessions)
@@ -229,3 +244,29 @@ class SecurityOverviewSensor(SensorEntity):
             "network_details_enabled": self.monitor.expose_network,
             "last_successful_scan": self.monitor.last_successful_scan,
         }
+
+
+class GlobalLoginSensor(SensorEntity):
+    """Keep unattributed login failures at integration scope."""
+    _attr_should_poll = False
+    _attr_icon = "mdi:shield-alert"
+
+    def __init__(self, monitor, metric):
+        self.monitor, self.metric = monitor, metric
+        self._attr_unique_id = f"{DOMAIN}_global_{metric}"
+        self._attr_name = f"HA Security {metric.replace('_', ' ').capitalize()}"
+
+    @property
+    def available(self):
+        return self.monitor.login_status == "observing"
+
+    @property
+    def native_value(self):
+        return login_summary(self.monitor.history, status=self.monitor.login_status, include_events=False)[self.metric] if self.available else None
+
+    @property
+    def extra_state_attributes(self):
+        return {"ha_security_metric": "global_" + self.metric,
+                **login_summary(self.monitor.history, status=self.monitor.login_status, network=self.monitor.expose_network, include_events=self.metric == "successful_logins_24h"),
+                "login_tracking_reason": self.monitor.login_reason,
+                "login_tracking_started_at": self.monitor.login_started_at}

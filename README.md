@@ -2,13 +2,87 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.6 session dashboard
+## v0.1.9 login activity and security assessment
+
+After installing and restarting Core, enable **Observe login outcomes** in the
+integration's UI options, then update the dashboard module URL to
+`/ha_security/ha-security-card.js?v=0.1.9`. No dashboard YAML changes are required.
+This is independent of the WebSocket option. Observation starts when enabled;
+old login outcomes cannot be reconstructed from token timestamps.
+
+Each user device gains **Last successful login**, **Successful logins 24h**,
+**Correlated failed attempts 24h**, and **Security status**. Global entities expose
+successful and failed counts plus security status. Disabled/unsupported observation
+makes those entities unavailable, with diagnostics in the overview/dashboard.
+
+The new **Login activity** tab supports account, outcome and severity filters,
+search, expandable address/hostname/location details, timestamps and assessment
+reasons. Session badges use a matching observed login (same user, credential ID,
+source IP and connection start within 10 minutes); unmatched sessions are **Not
+assessed**. The badge records assessment at connection observation, not a later
+claim about current safety. Current user status aggregates the past 24 hours.
+
+Observed successes mean successful **authorization-code exchanges**, including
+passwordless providers. Ordinary token refreshes, API requests and WebSocket token
+authentication are excluded. Failures mean HA login flows returning explicit
+`invalid_auth` or `invalid_code` (password/MFA). Malformed requests, invalid access
+tokens, reverse-proxy authentication and abandoned flows are outside this coverage.
+Failed users are **unknown**: no attempted usernames or credentials are collected.
+Same-IP failures preceding a success are correlated, not attributed to that user;
+shared NAT/proxies can include different people. Per-user counts are labelled accordingly.
+
+Initial conservative rules:
+
+| Assessment | Evidence |
+| --- | --- |
+| Normal | No rule triggered within observed coverage; unfamiliar cellular IP alone and one/two typos do not escalate |
+| Review | At least 5 failures from one IP within 10 minutes; or a success using both a new credential and unfamiliar public IP |
+| Likely an issue | Success after at least 10 same-IP failures within 10 minutes, with both a new credential and unfamiliar public IP |
+
+A preceding successful login ends that IP's failure sequence. IP geolocation,
+VPN/cellular changes and connection count alone do not escalate. These are
+explainable heuristics, not confirmation of compromise; no credentials are revoked
+and no notifications are sent automatically.
+
+Use **Recognize credential** in login details to explicitly establish familiarity.
+The admin-only **HA Security: Recognize credential or source** action also supports
+an exact IP and `recognized: false` to forget a recognition. Recognition persists
+locally, bounded to 1,000 users and 1,000 entries per category/user. It suppresses
+novelty-only current warnings; repeated-failure warnings and historical assessments
+remain. Existing IP/token observations provide familiarity without declaring them
+trusted. Addresses remain behind **Expose IP/client details**; optional public-IP
+enrichment uses the existing opt-in setting and never geolocates private addresses.
+
+Login outcomes and reasons are searchable with **Search audit** (`login_success`
+and `login_failure`) and use the shared retention/10,000-event cap. Counts are
+retained observations, not complete all-time totals. The observer uses guarded
+internal HA methods checked against Core 2026.9.4; observation failures preserve
+HA's original responses and expose safe diagnostics. Unload/reload restores hooks.
+No request/response bodies, passwords, MFA codes, authorization codes or token
+values are inspected or persisted.
+
+## v0.1.8 connection and credential addresses
+
+Session details now keep the **connection source IP** separate from the same
+credential's **last recorded IP**, with independent hostname and location details.
+LAN access normally shows a private source IP. A public credential IP can reflect
+another connection or cloud/proxy use; it is not inferred as the LAN session's
+public address. Both appear when available, with credential-use and observation
+timestamps. Other credentials remain in the Credentials tab rather than being
+assigned to a session just because they belong to the same user.
+
+Live rows refresh credential metadata on each inventory scan. Closed history keeps
+the last observed metadata; existing historical rows may lack these fields.
+Network details and public IP enrichment still require their existing UI options.
+Public geolocation cannot locate a private address, and no public address is guessed.
+
+### Session compatibility
 
 v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
 annotations, used by HA 2026.9.4. It checks parameter names without evaluating
 HA's type-only imports. Unsupported/error tracking also exposes a safe
 `tracking_reason` in entities and the dashboard, plus a warning in Core logs.
-After updating, restart Core, reload the browser resource with `?v=0.1.7`,
+After updating, restart Core, reload the browser resource with `?v=0.1.9`,
 and reconnect clients after enabling session tracking. If tracking is still
 unsupported, report the diagnostic shown on the dashboard.
 
@@ -17,7 +91,7 @@ unsupported, report the diagnostic shown on the dashboard.
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.7`
+- URL: `/ha_security/ha-security-card.js?v=0.1.9`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with
@@ -92,7 +166,7 @@ template, and searchable local history.
 
 ### Per-user security entities
 
-Each user gets nine sensors: active WebSocket count, historical session count,
+Each user gets thirteen sensors: active WebSocket count, historical session count,
 refresh-token count, recently used token count, last recorded token use, last
 attributed service call, recently observed status, known IP count, and new
 IP/client/token observation count in retained history. Existing refresh-token
@@ -182,7 +256,7 @@ never automatically installed or overwritten.
 
 ### Validation checklist
 
-After updating via HACS and restarting Core, verify the nine sensors per user,
+After updating via HACS and restarting Core, verify the thirteen sensors per user,
 run Scan authentication now and Get authentication inventory, make a harmless
 user-attributed service call, then search for that event. Check options reload,
 history preservation across restart, and non-admin denial of audit actions.
@@ -286,7 +360,7 @@ are cleaned up. You can then remove the custom integration folder.
 ### Per-user credential activity and IP history (v0.1.4)
 
 Each discovered user appears as a **User account** service device under
-HA Security in Devices & services, with all nine security sensors grouped
+HA Security in Devices & services, with all thirteen security sensors grouped
 under it. Devices use the stable authentication user ID, so account renames
 update the device name without replacing entities. Existing entities retain
 their unique IDs and attach to the user device when loaded after updating.

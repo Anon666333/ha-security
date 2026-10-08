@@ -11,7 +11,8 @@
           "recent_minutes": "Recent observation window (minutes)",
           "expose_network": "Expose IP/client details and retained observations on entities",
           "enrich_ip": "Look up public IP context (optional)",
-          "track_sessions": "Observe WebSocket sessions (experimental)"
+          "track_sessions": "Observe WebSocket sessions (experimental)",
+          "track_logins": "Observe login outcomes (experimental)"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Default 300 seconds.",
@@ -19,7 +20,8 @@
           "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
           "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder.",
           "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate.",
-          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default."
+          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default.",
+          "track_logins": "Off by default. Observes authorization-code successes and explicit password/MFA failures using internal HA hooks. Refreshes and WebSocket authentication are not password logins. Starts when enabled; failed users usually cannot be identified."
         }
       }
     },
@@ -41,7 +43,8 @@
           "recent_minutes": "Recent observation window (minutes)",
           "expose_network": "Expose IP/client details and retained observations on entities",
           "enrich_ip": "Look up public IP context (optional)",
-          "track_sessions": "Observe WebSocket sessions (experimental)"
+          "track_sessions": "Observe WebSocket sessions (experimental)",
+          "track_logins": "Observe login outcomes (experimental)"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Changes restart the monitor.",
@@ -49,7 +52,8 @@
           "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
           "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder.",
           "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate.",
-          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default."
+          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default.",
+          "track_logins": "Off by default. Observes authorization-code successes and explicit password/MFA failures using internal HA hooks. Refreshes and WebSocket authentication are not password logins. Starts when enabled; failed users usually cannot be identified."
         }
       }
     },

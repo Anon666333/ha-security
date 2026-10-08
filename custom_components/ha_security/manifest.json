@@ -1,12 +1,18 @@
 {
   "domain": "ha_security",
   "name": "HA Security",
-  "version": "0.1.7",
-  "dependencies": ["websocket_api"],
-  "loggers": ["custom_components.ha_security"],
+  "version": "0.1.9",
+  "dependencies": [
+    "websocket_api"
+  ],
+  "loggers": [
+    "custom_components.ha_security"
+  ],
   "config_flow": true,
   "single_config_entry": true,
-  "codeowners": ["@Anon666333"],
+  "codeowners": [
+    "@Anon666333"
+  ],
   "documentation": "https://github.com/Anon666333/ha-security",
   "issue_tracker": "https://github.com/Anon666333/ha-security/issues",
   "integration_type": "service",
