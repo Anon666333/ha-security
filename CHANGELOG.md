@@ -2,6 +2,15 @@
 
 Published releases use `vMAJOR.MINOR.PATCH` tags matching the integration manifest.
 
+## [0.1.13]
+
+- Reduced sensor update work by expanding only the displayed session window, indexing credential audit evidence once, and skipping detail generation for credential counts.
+
+- Excluded bulky session, credential, IP-observation and login-event lists from Recorder snapshots to prevent oversized-attribute warnings and repeated database writes.
+- Kept dashboard details and locally retained audit/session history available; sensor states and summary attributes continue recording.
+
+Restart Core after updating. No dashboard YAML changes are required.
+
 ## [0.1.12]
 
 - Added user display names alongside IDs in audit history, token inventory, session results and login events.

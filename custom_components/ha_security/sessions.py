@@ -96,8 +96,23 @@ class SessionTracker:
         self.status = "disabled"
 
     def view(self, user_id, network=False):
-        rows = [self.history.with_user_names(row) for row in reversed(self.history.sessions) if row["user_id"] == user_id]
-        for row in rows:
+        # Count all retained rows, but expand only the bounded dashboard window.
+        active_source, ended_source = [], []
+        active_count = ended_count = 0
+        for row in reversed(self.history.sessions):
+            if row["user_id"] != user_id:
+                continue
+            if row["state"] == "connected":
+                active_count += 1
+                if len(active_source) < 100:
+                    active_source.append(row)
+            else:
+                ended_count += 1
+                if len(ended_source) < 100:
+                    ended_source.append(row)
+        active = [self.history.with_user_names(row) for row in active_source]
+        ended = [self.history.with_user_names(row) for row in ended_source]
+        for row in active + ended:
             if "security_level" not in row:
                 row.update(session_assessment(self.history, row))
             row["label"] = self.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"] or "Unknown client"
@@ -108,16 +123,14 @@ class SessionTracker:
                 for key in ("source_ip", "client_id", "client_name", "token_id", "label",
                             "credential_last_used_ip", "credential_last_used_at", "credential_ip_observed_at"):
                     row.pop(key, None)
-        active = [row for row in rows if row["state"] == "connected"]
-        ended = [row for row in rows if row["state"] != "connected"]
         return {
-            "active_connection_count": len(active), "tracking_status": self.status,
+            "active_connection_count": active_count, "tracking_status": self.status,
             "tracking_reason": self.reason,
             "tracking_started_at": self.started_at,
             "coverage": "Connections observed since tracking started; reconnect existing clients for coverage. HTTP/cloud requests are outside this count",
             "active_connections": active[:100], "session_history": ended[:100],
-            "active_connections_total": len(active), "session_history_total": len(ended),
-            "sessions_truncated": len(active) > 100 or len(ended) > 100,
+            "active_connections_total": active_count, "session_history_total": ended_count,
+            "sessions_truncated": active_count > 100 or ended_count > 100,
         }
 
 

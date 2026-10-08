@@ -90,6 +90,12 @@ class UserTokenSensor(SensorEntity):
 
     _attr_should_poll = False
     _attr_icon = "mdi:account-key"
+    # Dashboard payloads remain live; retained detail belongs in AuditStore,
+    # not in Recorder's repeated state attribute snapshots.
+    _unrecorded_attributes = frozenset({
+        "active_connections", "session_history", "tokens", "connections",
+        "ip_observations", "login_events",
+    })
 
     def __init__(self, monitor, user_id, metric="refresh_tokens"):
         self.monitor = monitor
@@ -140,7 +146,10 @@ class UserTokenSensor(SensorEntity):
             value = login_summary(self.monitor.history, self.user_id, self.monitor.login_status, include_events=False)[self.metric]
             return parse_time(value) if self.metric == "last_successful_login" else value
         if self.metric == "recently_used_tokens":
-            return self._activity["recently_used_token_count"]
+            return self.monitor.history.token_activity(
+                self.user_id, [row for row in self.monitor.snapshot["tokens"] if row["user_id"] == self.user_id],
+                self.monitor.recent_minutes, include_details=False,
+            )["recently_used_token_count"]
         if self.metric in ("active_websocket_connections", "session_history_count"):
             detail = self.monitor.sessions.view(self.user_id)
             return detail["active_connection_count"] if self.metric == "active_websocket_connections" else detail["session_history_total"]
@@ -251,6 +260,7 @@ class GlobalLoginSensor(SensorEntity):
     """Keep unattributed login failures at integration scope."""
     _attr_should_poll = False
     _attr_icon = "mdi:shield-alert"
+    _unrecorded_attributes = frozenset({"login_events"})
 
     def __init__(self, monitor, metric):
         self.monitor, self.metric = monitor, metric

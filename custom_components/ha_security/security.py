@@ -283,7 +283,7 @@ class SecurityHistory:
             ),
         }
 
-    def token_activity(self, user_id, tokens, recent_minutes=15, now=None):
+    def token_activity(self, user_id, tokens, recent_minutes=15, now=None, include_details=True):
         """Expose bounded credential activity, never claim live connections."""
         now = now or utcnow()
         rows = []
@@ -298,7 +298,22 @@ class SecurityHistory:
             )
             row["expired"] = expired
             rows.append(row)
+        if not include_details:
+            return {"recently_used_token_count": sum(row["recently_used"] for row in rows)}
         rows.sort(key=lambda row: row.get("last_used_at") or "", reverse=True)
+        evidence_by_token = {}
+        new_tokens = set()
+        new_ips = set()
+        for record in self.records:
+            if record.get("user_id") != user_id:
+                continue
+            tid = record.get("metadata", {}).get("token_id") or record.get("token_id")
+            if tid:
+                evidence_by_token.setdefault(tid, []).append(record)
+            if record["kind"] == "new_token":
+                new_tokens.add(tid)
+            if record["kind"] == "new_ip":
+                new_ips.add((tid, record.get("value")))
         observations = []
         for record in reversed(self.records):
             metadata = record.get("metadata")
@@ -311,6 +326,9 @@ class SecurityHistory:
             observation["observation_kind"] = record["kind"]
             observations.append(observation)
         from .network import ip_scope
+        observations_by_token = {}
+        for observation in observations:
+            observations_by_token.setdefault(observation["token_id"], []).append(observation)
         current_ids = {row["token_id"] for row in rows}
         removed = {}
         for record in reversed(self.records):
@@ -327,16 +345,14 @@ class SecurityHistory:
             row["activity"] = "removed" if tid in removed else "expired" if row["expired"] else "recently_used" if row["recently_used"] else "outside_window" if row.get("last_used_at") else "never_observed"
             row["ip_scope"] = ip_scope(row.get("last_used_ip"))
             row["ip_context"] = self.ip_context.get(row.get("last_used_ip"), {})
-            relevant = [item for item in observations if item["token_id"] == tid]
+            relevant = observations_by_token.get(tid, [])
             row["ip_changed"] = len({item["last_used_ip"] for item in relevant}) > 1
-            row["new_credential"] = any(record["kind"] == "new_token" and record.get("metadata", {}).get("token_id") == tid for record in self.records)
-            evidence = [record for record in self.records if record.get("user_id") == user_id
-                        and (record.get("metadata", {}).get("token_id") == tid or record.get("token_id") == tid)]
+            row["new_credential"] = tid in new_tokens
+            evidence = evidence_by_token.get(tid, [])
             row["first_observed_at"] = evidence[0]["timestamp"] if evidence else None
             row["removed_at"] = next((record["timestamp"] for record in reversed(evidence)
                                       if record["kind"] == "token_removed"), None)
-            row["new_ip"] = any(record["kind"] == "new_ip" and record.get("token_id") == tid
-                                and record.get("value") == row.get("last_used_ip") for record in self.records)
+            row["new_ip"] = (tid, row.get("last_used_ip")) in new_ips
         for observation in observations:
             observation["label"] = self.token_labels.get(observation["token_id"]) or observation.get("client_name") or observation.get("client_id") or "Unknown client"
             observation["ip_context"] = self.ip_context.get(observation["last_used_ip"], {})

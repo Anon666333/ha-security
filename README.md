@@ -29,7 +29,7 @@ Everything is configured through the UI.
 In **Settings → Dashboards → Resources**, add a **JavaScript module**:
 
 ```text
-/ha_security/ha-security-card.js?v=0.1.12
+/ha_security/ha-security-card.js?v=0.1.13
 ```
 
 Enable Advanced mode in your profile if Resources is hidden. Create a separate dashboard, then paste [dashboards/security.yaml](dashboards/security.yaml) into its raw configuration editor. Refresh the browser.
