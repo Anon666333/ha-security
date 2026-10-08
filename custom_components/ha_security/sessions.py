@@ -18,6 +18,7 @@ class SessionTracker:
         self.changed = changed
         self.live = {}
         self.status = "disabled"
+        self.reason = None
         self.started_at = None
         # Persisted open connections belong to a previous monitoring run.
         for row in self.history.sessions:
@@ -89,6 +90,7 @@ class SessionTracker:
         ended = [row for row in rows if row["state"] != "connected"]
         return {
             "active_connection_count": len(active), "tracking_status": self.status,
+            "tracking_reason": self.reason,
             "tracking_started_at": self.started_at,
             "coverage": "Connections observed since tracking started; reconnect existing clients for coverage. HTTP/cloud requests are outside this count",
             "active_connections": active[:100], "session_history": ended[:100],
@@ -103,19 +105,28 @@ def install_adapter(hass, tracker, connection_class=None, auth_class=None):
     Original methods always run unchanged. Failures in observation never enter
     HA authentication/command processing. Remove only wrappers we still own.
     """
+    stage = "import"
     try:
         if connection_class is None:
             from homeassistant.components.websocket_api.connection import ActiveConnection
             from homeassistant.components.websocket_api.auth import AuthPhase
             connection_class = ActiveConnection
             auth_class = AuthPhase
-        if not {"hass", "user"}.issubset(inspect.signature(connection_class.__init__).parameters):
+        stage = "constructor_check"
+        constructor = inspect.unwrap(connection_class.__init__)
+        code = getattr(constructor, "__code__", None)
+        # inspect.signature evaluates deferred annotations on Python 3.14.
+        # HA has TYPE_CHECKING-only names there; we only need parameter names.
+        parameters = set(code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]) if code else set()
+        if not {"hass", "user"}.issubset(parameters):
             raise ValueError("Unsupported connection constructor")
+        stage = "connection_lifecycle"
         originals = {name: getattr(connection_class, name) for name in
                      ("__init__", "async_handle", "async_handle_close")}
         if any(inspect.iscoroutinefunction(fn) for fn in originals.values()):
             raise ValueError("Unsupported asynchronous lifecycle")
         auth_originals = {}
+        stage = "auth_lifecycle"
         if auth_class:
             for name in ("async_handle", "async_handle_supervisor_unix_socket"):
                 original = getattr(auth_class, name, None)
@@ -125,8 +136,10 @@ def install_adapter(hass, tracker, connection_class=None, auth_class=None):
                     auth_originals[name] = original
             if "async_handle" not in auth_originals:
                 raise ValueError("Unsupported auth lifecycle")
-    except Exception:
+    except Exception as err:
         tracker.status = "unsupported"
+        tracker.reason = f"{stage}: {type(err).__name__}"
+        _LOGGER.warning("Session tracking unavailable at %s (%s)", stage, type(err).__name__)
         return lambda: None
 
     def safe_observe(connection, action):
@@ -135,6 +148,7 @@ def install_adapter(hass, tracker, connection_class=None, auth_class=None):
                 action()
         except Exception as err:
             tracker.status = "error"
+            tracker.reason = f"observation: {type(err).__name__}"
             _LOGGER.warning("Session observation stopped (%s)", type(err).__name__)
 
     @wraps(originals["__init__"])

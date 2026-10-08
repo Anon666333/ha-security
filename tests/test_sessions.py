@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 import json
+import inspect
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -86,9 +88,30 @@ class SessionTests(unittest.TestCase):
         self.assertIs(Connection.async_handle, original)
 
     def test_unsupported_adapter_fails_closed(self):
-        uninstall = install_adapter(self.hass, self.tracker, object)
+        with self.assertLogs("ha_security_unit.sessions", level="WARNING"):
+            uninstall = install_adapter(self.hass, self.tracker, object)
         self.assertEqual(self.tracker.status, "unsupported")
+        self.assertEqual(self.tracker.reason, "constructor_check: ValueError")
         uninstall()
+
+    @unittest.skipUnless(sys.version_info >= (3, 14), "Deferred annotations require Python 3.14")
+    def test_ha_type_checking_annotations_do_not_block_tracking(self):
+        namespace = {"Connection": Connection}
+        exec("def constructor(self, hass: HomeAssistant, user: User, remote=None):\n"
+             "    Connection.__init__(self, hass, user, remote)\n", namespace)
+        class DeferredConnection(Connection):
+            __init__ = namespace["constructor"]
+        # Reproduce HA's TYPE_CHECKING-only names and the previous failure.
+        with self.assertRaises(NameError):
+            inspect.signature(DeferredConnection.__init__)
+        uninstall = install_adapter(self.hass, self.tracker, DeferredConnection)
+        try:
+            self.assertEqual(self.tracker.status, "observing")
+            connection = DeferredConnection(self.hass, self.user, "192.0.2.1")
+            connection.async_handle({})
+            self.assertEqual(self.tracker.view("u")["active_connection_count"], 1)
+        finally:
+            uninstall()
 
 
 class AuthBoundaryTests(unittest.IsolatedAsyncioTestCase):
