@@ -2,7 +2,7 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.3 MVP
+## v0.1.5 security view
 
 The MVP combines authentication inventory, new IP/client/token observations,
 user-context service-call auditing, per-user entities, a native Lovelace dashboard
@@ -10,7 +10,7 @@ template, and searchable local history.
 
 ### Per-user security entities
 
-Each user gets six sensors: refresh-token count, last recorded token use, last
+Each user gets seven sensors: refresh-token count, recently used token count, last recorded token use, last
 attributed service call, recently observed status, known IP count, and new
 IP/client/token observation count in retained history. Existing refresh-token
 sensor unique IDs are preserved.
@@ -30,6 +30,8 @@ Under Developer tools → Actions, choose:
 - **HA Security: Search audit history** for text, user ID, event kind, result
   limit (maximum 500), and pagination offset. Results are newest first.
 - **HA Security: Scan authentication now** to trigger an immediate scan.
+- **HA Security: Name credential** to set a nickname using its token record ID.
+  An empty label clears it. Labels are local preferences, not auth changes.
 
 These actions return response data. Request/display the action response; in an
 automation use a `response_variable`. They use HA's admin-service guard
@@ -77,7 +79,7 @@ For permanent deletion, remove the integration, then delete that specific file.
 
 Client URLs have user information, query strings, and fragments stripped.
 Names, client labels, IPs, and timestamps remain personal metadata.
-**Expose latest IP/client on entities** is off by default. Enabling it makes
+**Expose IP/client details and retained observations on entities** is off by default. Enabling it makes
 those attributes available to users with entity access and to Recorder/history;
 an admin-only dashboard does not change entity access permissions.
 
@@ -96,7 +98,7 @@ never automatically installed or overwritten.
 
 ### Validation checklist
 
-After updating via HACS and restarting Core, verify the six sensors per user,
+After updating via HACS and restarting Core, verify the seven sensors per user,
 run Scan authentication now and Get authentication inventory, make a harmless
 user-attributed service call, then search for that event. Check options reload,
 history preservation across restart, and non-admin denial of audit actions.
@@ -229,7 +231,42 @@ Recorder retention is separate from the integration's audit retention.
 Only IPs visible at polling time can be retained. A token shared by multiple
 clients exposes only its latest recorded IP on each scan, so simultaneous
 connections and rapid IP changes between scans cannot be reconstructed.
-Hostname/geolocation/ASN enrichment is not included in this release.
+### Readable connections and optional IP context (v0.1.5)
+
+The `connections` attribute and separate dashboard now combine current and
+retained removed credentials. Each row has a friendly label, original client
+metadata, source IP/address scope, activity state, first retained observation,
+and change markers. Removed/expired credentials remain distinct from recently
+used credentials. New-credential, new-IP and IP-changed markers describe events
+in retained history; they are not transient alerts or confirmed threats.
+First retained observation can advance as history expires. The dashboard shows
+relative times alongside exact timestamps, separating creation, token use and
+observation. Nicknames follow token record IDs across IP changes and restarts;
+they do not prove the physical identity of a device. Up to 1,000 nicknames are
+stored until cleared, independently of audit retention.
+
+In integration options, **Look up public IP context (optional)** enables
+HTTPS requests to [ipwho.is](https://ipwhois.io/documentation) and reverse-DNS
+lookups through the host's DNS resolver. Only public source IPs are sent, with
+no usernames, token identifiers or credentials. No lookup occurs by default,
+and non-public IPs are classified locally. Network detail exposure is a separate
+option: enable both to display enrichment in entities/dashboard.
+
+Available enrichment includes hostname, country, region, city, ASN and
+organisation. It describes the IP/network, not a person's verified location;
+cloud services/proxies may account for the apparent location. Provider fields
+may be absent. Each result shows lookup status and time. Provider/DNS failures
+do not prevent authentication monitoring. At most three uncached public IPs
+are processed per scan, so a large initial inventory fills in over several
+scans. HTTPS has a five-second timeout; reverse DNS has a three-second timeout.
+Successful provider results are cached for seven days; failures retry after an
+hour. The local cache is capped at 1,000 IPs and pruned by audit retention.
+Disabling enrichment stops new lookups but leaves retained cached context.
+No historical-IP lookup occurs unless that IP is observed on a current token.
+
+Update the separately supplied dashboard YAML to see the connection table,
+context and grouped IP history. Entity detail lists remain capped at 100 rows;
+the audit action supplies further retained metadata, not unlimited archives.
 
 - A refresh-token record represents a credential grant, not an online session.
   Multiple tabs may share one token; a token may remain after a client goes offline.

@@ -10,6 +10,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import CONF_ENRICH_IP
 from .monitor import AuthMonitor
 from .audit import AuditStore, register_actions, remove_actions
 from .const import (
@@ -37,6 +38,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         settings.get(CONF_RECENT_MINUTES, DEFAULT_RECENT_MINUTES),
         settings.get(CONF_EXPOSE_NETWORK, False),
     )
+    if settings.get(CONF_ENRICH_IP, False):
+        from .network import enrich
+        async def enrich_ips(history, ips):
+            await enrich(hass, history, ips)
+        monitor.enricher = enrich_ips
     # A failed initial read does not prevent future retry attempts.
     await monitor.async_refresh()
     unsubscribe = async_track_time_interval(

@@ -51,6 +51,13 @@ def register_actions(hass, monitor):
     async def scan(call):
         return {"success": await monitor.async_refresh()}
 
+    async def label(call):
+        async with monitor._lock:
+            monitor.history.set_token_label(call.data["token_id"], call.data["label"])
+            monitor.audit.changed()
+            await monitor._notify()
+        return {"success": True}
+
     schema = vol.Schema({
         vol.Optional("text", default=""): str,
         vol.Optional("user_id"): str,
@@ -62,6 +69,10 @@ def register_actions(hass, monitor):
         ("query_audit", query, schema),
         ("get_inventory", inventory, vol.Schema({})),
         ("scan_now", scan, vol.Schema({})),
+        ("set_token_label", label, vol.Schema({
+            vol.Required("token_id"): str,
+            vol.Required("label"): vol.All(str, vol.Length(max=128)),
+        })),
     ):
         async_register_admin_service(
             hass, DOMAIN, name, handler, schema=config,
@@ -70,5 +81,5 @@ def register_actions(hass, monitor):
 
 
 def remove_actions(hass):
-    for name in ("query_audit", "get_inventory", "scan_now"):
+    for name in ("query_audit", "get_inventory", "scan_now", "set_token_label"):
         hass.services.async_remove(DOMAIN, name)

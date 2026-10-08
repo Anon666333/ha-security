@@ -110,12 +110,18 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
                 {"token_id": "b", "user_id": "u", "last_used_at": now.isoformat(),
                  "last_used_ip": "192.0.2.2", "client_id": "web"}]
         history.observe({"users": [], "tokens": rows}, now)
+        history.set_token_label("a", "Matt's phone")
         self.assertEqual(history.token_activity("u", rows, now=now)["recently_used_token_count"], 2)
         rows[0]["last_used_ip"] = "192.0.2.3"
         history.observe({"users": [], "tokens": rows}, now)
         history = SecurityHistory(data=json.loads(json.dumps(history.serialize())))
         history.observe({"users": [], "tokens": []}, now)
         detail = history.token_activity("u", [], now=now)
+        removed = next(row for row in detail["connections"] if row["token_id"] == "a")
+        self.assertEqual(removed["label"], "Matt's phone")
+        self.assertEqual(removed["activity"], "removed")
+        self.assertTrue(removed["ip_changed"])
+        self.assertFalse(removed["new_credential"])
         self.assertEqual(detail["recently_used_token_count"], 0)
         self.assertEqual({row["last_used_ip"] for row in detail["ip_observations"]},
                          {"192.0.2.1", "192.0.2.2", "192.0.2.3"})
@@ -124,3 +130,7 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history.token_activity("u", rows, now=now)["recently_used_token_count"], 0)
         history.prune(now + timedelta(days=31))
         self.assertEqual(history.token_activity("u", [], now=now)["ip_observations"], [])
+        with self.assertRaises(ValueError):
+            history.set_token_label("unknown", "Unknown")
+        history.set_token_label("a", "")
+        self.assertNotIn("a", history.token_labels)

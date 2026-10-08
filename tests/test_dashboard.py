@@ -32,19 +32,21 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("Unrelated", content)
         activity = SimpleNamespace(name="Matt Recently used tokens", state="2", attributes={
             "ha_security_metric": "recently_used_tokens", "recent_window_minutes": 15,
-            "tokens": [{"token_id": "record-a", "client_id": "mobile",
+            "connections": [{"token_id": "record-a", "client_id": "mobile", "label": "Matt's phone",
                         "last_used_ip": "192.0.2.1", "recently_used": True}],
             "ip_observations": [{"token_id": "record-a", "last_used_ip": "192.0.2.2",
                                  "observed_at": "2026-10-07T10:00:00+00:00"}],
         })
-        detail_template = Environment(undefined=StrictUndefined).from_string(cards[2]["content"])
+        environment = Environment(undefined=StrictUndefined)
+        environment.globals.update(as_datetime=lambda value, default=None: value, relative_time=lambda value: "2 minutes")
+        detail_template = environment.from_string(cards[2]["content"])
         details = detail_template.render(states=SimpleNamespace(sensor=[activity]))
         self.assertIn("192.0.2.1", details)
         self.assertIn("192.0.2.2", details)
         self.assertIn("record-a", details)
-        activity.attributes.pop("tokens")
+        activity.attributes.pop("connections")
         self.assertIn("Enable", detail_template.render(states=SimpleNamespace(sensor=[activity])))
 
     def test_action_definitions_match_registered_actions(self):
         config = yaml.safe_load((ROOT / "custom_components/ha_security/services.yaml").read_text())
-        self.assertEqual(set(config), {"query_audit", "get_inventory", "scan_now"})
+        self.assertEqual(set(config), {"query_audit", "get_inventory", "scan_now", "set_token_label"})

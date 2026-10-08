@@ -27,6 +27,7 @@ class AuthMonitor:
         self.recent_minutes = recent_minutes
         self.expose_network = expose_network
         self.stopped = False
+        self.enricher = None
 
     def subscribe(self, listener):
         """Register a platform update callback and return its cleanup."""
@@ -91,6 +92,13 @@ class AuthMonitor:
                         )
             self.snapshot = current
             self.history.observe(current)
+            if self.enricher:
+                try:
+                    await self.enricher(self.history, [
+                        row["last_used_ip"] for row in current["tokens"] if row.get("last_used_ip")
+                    ])
+                except Exception as err:
+                    _LOGGER.debug("IP context lookup failed (%s)", type(err).__name__)
             if self.audit:
                 self.audit.changed()
             self.last_scan_success = True
