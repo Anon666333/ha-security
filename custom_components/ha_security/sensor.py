@@ -37,6 +37,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     entry_type=dr.DeviceEntryType.SERVICE,
                 )
             expected = {f"{DOMAIN}_{uid}_{metric}" for uid in users for metric in METRICS}
+            expected.update(entity._attr_unique_id for entity in global_entities)
             for record in er.async_entries_for_config_entry(registry, entry.entry_id):
                 if (
                     record.domain == "sensor"

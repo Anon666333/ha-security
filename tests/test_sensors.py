@@ -39,7 +39,8 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         )
         er = modules["homeassistant.helpers.entity_registry"]
         er.async_get = lambda hass: self.registry
-        er.async_entries_for_config_entry = lambda registry, entry_id: []
+        self.registry_entries = []
+        er.async_entries_for_config_entry = lambda registry, entry_id: self.registry_entries
         self.devices = SimpleNamespace(async_get_or_create=Mock(), async_update_device=Mock(), async_remove_device=Mock())
         self.device_entries = []
         dr = modules["homeassistant.helpers.device_registry"]
@@ -52,6 +53,21 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.account = user({"record": token()})
         self.auth = SimpleNamespace(async_get_users=AsyncMock(return_value=[self.account]))
         self.monitor = AuthMonitor(self.auth)
+
+    async def test_reconciliation_preserves_global_login_entities(self):
+        await self.monitor.async_refresh()
+        self.registry_entries = [SimpleNamespace(domain="sensor", platform="ha_security",
+            unique_id=f"ha_security_global_{metric}", entity_id=f"sensor.global_{metric}")
+            for metric in ("successful_logins_24h", "failed_login_attempts_24h", "security_status")]
+        self.registry_entries.append(SimpleNamespace(domain="sensor", platform="ha_security",
+            unique_id="ha_security_removed_user_security_status", entity_id="sensor.removed_user_status"))
+        cleanups = []
+        await self.module.async_setup_entry(SimpleNamespace(data={"ha_security": self.monitor}),
+            SimpleNamespace(entry_id="test", async_on_unload=cleanups.append), lambda entities: None)
+        await self.monitor.async_refresh()
+        self.assertTrue(all(call.args[0] == "sensor.removed_user_status" for call in self.registry.async_remove.call_args_list))
+        self.assertEqual(self.registry.async_remove.call_count, 2)
+        cleanups[0]()
 
     async def test_login_entities_counts_privacy_and_disabled_coverage(self):
         from ha_security_unit.risk import record_login
