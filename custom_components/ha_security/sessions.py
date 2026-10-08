@@ -7,6 +7,7 @@ import logging
 import uuid
 
 from .security import safe_client, safe_ip, utcnow
+from .risk import session_assessment
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class SessionTracker:
                     if isinstance(getattr(token, "last_used_at", None), datetime) else None,
                 "credential_ip_observed_at": now,
             }
+            row.update(session_assessment(self.history, row))
             self.live[key] = row
             self.history.sessions.append(row)
         row = self.live[key]
@@ -96,6 +98,8 @@ class SessionTracker:
     def view(self, user_id, network=False):
         rows = [dict(row) for row in reversed(self.history.sessions) if row["user_id"] == user_id]
         for row in rows:
+            if "security_level" not in row:
+                row.update(session_assessment(self.history, row))
             row["label"] = self.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"] or "Unknown client"
             if network:
                 row["ip_context"] = self.history.ip_context.get(row["source_ip"], {})

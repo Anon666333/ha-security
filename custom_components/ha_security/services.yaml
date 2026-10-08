@@ -92,3 +92,22 @@ query_sessions:
         number:
           min: 0
           mode: box
+
+recognize_source:
+  name: Recognize credential or source
+  description: Explicitly recognize or forget a user's credential record or IP. Repeated-failure warnings remain. Does not change Home Assistant authentication.
+  fields:
+    user_id:
+      required: true
+      selector:
+        text:
+    token_id:
+      selector:
+        text:
+    ip:
+      selector:
+        text:
+    recognized:
+      default: true
+      selector:
+        boolean:

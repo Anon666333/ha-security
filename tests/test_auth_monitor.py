@@ -130,7 +130,7 @@ class ManifestTests(unittest.TestCase):
             (ROOT / "custom_components/ha_security/manifest.json").read_text()
         )
         self.assertEqual(manifest["domain"], "ha_security")
-        self.assertEqual(manifest["version"], "0.1.8")
+        self.assertEqual(manifest["version"], "0.1.9")
         self.assertIn("custom_components.ha_security", manifest["loggers"])
         self.assertEqual(manifest["requirements"], [])
 

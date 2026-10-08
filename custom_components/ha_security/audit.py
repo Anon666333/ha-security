@@ -9,7 +9,8 @@ from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .security import SecurityHistory, token_metadata
+from .security import SecurityHistory, token_metadata, safe_ip, utcnow
+from .risk import session_assessment
 
 
 class AuditStore:
@@ -59,6 +60,34 @@ def register_actions(hass, monitor):
             await monitor._notify()
         return {"success": True}
 
+    async def recognize(call):
+        uid = call.data["user_id"]
+        if uid not in {r["user_id"] for r in (monitor.snapshot or {}).get("users", [])}:
+            raise vol.Invalid("Unknown user")
+        tid, ip = call.data.get("token_id"), call.data.get("ip")
+        ip = safe_ip(ip)
+        if not tid and not ip:
+            raise vol.Invalid("Provide a credential record ID or valid IP")
+        if tid and not any(r["token_id"] == tid and r["user_id"] == uid for r in (monitor.snapshot or {}).get("tokens", [])):
+            raise vol.Invalid("Credential does not belong to this user")
+        async with monitor._lock:
+            if uid not in monitor.history.recognized and len(monitor.history.recognized) >= 1000:
+                raise vol.Invalid("Recognition user limit reached")
+            baseline = monitor.history.recognized.setdefault(uid, {"tokens": {}, "ips": {}})
+            for key, value in (("tokens", tid), ("ips", ip)):
+                if value:
+                    if call.data.get("recognized", True):
+                        baseline[key][value] = utcnow().isoformat()
+                    else:
+                        baseline[key].pop(value, None)
+                    while len(baseline[key]) > 1000:
+                        del baseline[key][next(iter(baseline[key]))]
+            monitor.history.add("recognition_changed", uid, token_id=tid, source_ip=ip,
+                                recognized=call.data.get("recognized", True))
+            monitor.audit.changed()
+            await monitor._notify()
+        return {"success": True}
+
     async def sessions(call):
         monitor.history.prune()
         values = []
@@ -68,6 +97,8 @@ def register_actions(hass, monitor):
             if call.data.get("state") and row["state"] != call.data["state"]:
                 continue
             detail = dict(row)
+            if "security_level" not in detail:
+                detail.update(session_assessment(monitor.history, row))
             detail["label"] = monitor.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"]
             detail["ip_context"] = monitor.history.ip_context.get(row["source_ip"], {})
             detail["credential_ip_context"] = monitor.history.ip_context.get(row.get("credential_last_used_ip"), {})
@@ -97,6 +128,10 @@ def register_actions(hass, monitor):
             vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
             vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
         })),
+        ("recognize_source", recognize, vol.Schema({
+            vol.Required("user_id"): str, vol.Optional("token_id"): str,
+            vol.Optional("ip"): str, vol.Optional("recognized", default=True): bool,
+        })),
         ("set_token_label", label, vol.Schema({
             vol.Required("token_id"): str,
             vol.Required("label"): vol.All(str, vol.Length(max=128)),
@@ -109,5 +144,5 @@ def register_actions(hass, monitor):
 
 
 def remove_actions(hass):
-    for name in ("query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions"):
+    for name in ("query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions", "recognize_source"):
         hass.services.async_remove(DOMAIN, name)

@@ -10,4 +10,4 @@ class DashboardTests(unittest.TestCase):
         self.assertTrue((ROOT / "custom_components/ha_security/www/ha-security-card.js").is_file())
     def test_action_definitions_match_registered_actions(self):
         config = yaml.safe_load((ROOT / "custom_components/ha_security/services.yaml").read_text())
-        self.assertEqual(set(config), {"query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions"})
+        self.assertEqual(set(config), {"query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions", "recognize_source"})

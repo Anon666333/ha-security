@@ -134,6 +134,16 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.cancel.assert_called_once()
         self.assertNotIn("ha_security", self.hass.data)
 
+    async def test_login_option_installs_and_unloads_observer(self):
+        install = Mock(return_value=Mock())
+        self.entry.options = {"track_logins": True}
+        with patch.dict(sys.modules, {"ha_security_setup_unit.login_monitor": SimpleNamespace(install_login_adapter=install)}):
+            await self.module.async_setup_entry(self.hass, self.entry)
+        install.assert_called_once()
+        monitor = self.hass.data["ha_security"]
+        await monitor.async_close()
+        install.return_value.assert_called_once()
+
     async def test_failed_startup_still_schedules_retry(self):
         self.hass.auth.async_get_users.side_effect = RuntimeError("SECRET")
         with self.assertLogs("ha_security_setup_unit.monitor", level="ERROR"):
@@ -200,7 +210,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         register.reset_mock()
         await self.module.async_setup_entry(self.hass, self.entry)
         registered = {item.args[2]: item for item in register.call_args_list}
-        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions"})
+        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions", "recognize_source"})
         for item in registered.values():
             self.assertEqual(item.kwargs["supports_response"], "only")
         response = await registered["scan_now"].args[3](SimpleNamespace(data={}))
@@ -210,6 +220,13 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         response = await registered["query_audit"].args[3](SimpleNamespace(data={"kind": "baseline_initialized"}))
         self.assertEqual(response["total"], 1)
         monitor = self.hass.data["ha_security"]
+        monitor.snapshot["users"] = [{"user_id": "u"}]
+        monitor.snapshot["tokens"] = [{"user_id": "u", "token_id": "record-a"}]
+        response = await registered["recognize_source"].args[3](SimpleNamespace(data={"user_id": "u", "token_id": "record-a"}))
+        self.assertTrue(response["success"])
+        self.assertIn("record-a", monitor.history.recognized["u"]["tokens"])
+        with self.assertRaises(vol.Invalid):
+            await registered["recognize_source"].args[3](SimpleNamespace(data={"user_id": "u", "token_id": "other"}))
         monitor.history.previous = {"record-a": {"user_id": "u"}}
         response = await registered["set_token_label"].args[3](SimpleNamespace(data={"token_id": "record-a", "label": "Phone"}))
         self.assertEqual(response, {"success": True})
@@ -244,7 +261,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
             await self.module.async_setup_entry(self.hass, self.entry)
         self.assertNotIn("ha_security", self.hass.data)
         self.cancel.assert_called_once()
-        self.assertEqual(self.hass.services.async_remove.call_count, 5)
+        self.assertEqual(self.hass.services.async_remove.call_count, 6)
 
     async def test_storage_batches_without_indefinite_deferral(self):
         await self.module.async_setup_entry(self.hass, self.entry)

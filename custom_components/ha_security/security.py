@@ -76,6 +76,7 @@ class SecurityHistory:
         self.token_labels = data.get("token_labels", {})
         self.ip_context = data.get("ip_context", {})
         self.sessions = data.get("sessions", [])
+        self.recognized = data.get("recognized", {})
         self.prune()
 
     def prune(self, now=None):
@@ -193,7 +194,7 @@ class SecurityHistory:
             "known_ips": self.known_ips, "known_clients": self.known_clients,
             "last_calls": self.last_calls,
             "token_labels": self.token_labels, "ip_context": self.ip_context,
-            "sessions": self.sessions,
+            "sessions": self.sessions, "recognized": self.recognized,
         }
 
     def set_token_label(self, token_id, label):
