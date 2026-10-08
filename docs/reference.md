@@ -18,7 +18,7 @@ release workflow and [CHANGELOG.md](../CHANGELOG.md) for update notes.
 
 After installing and restarting Core, enable **Observe login outcomes** in the
 integration's UI options, then update the dashboard module URL to
-`/ha_security/ha-security-card.js?v=0.1.12`. No dashboard YAML changes are required.
+`/ha_security/ha-security-card.js?v=0.1.13`. No dashboard YAML changes are required.
 This is independent of the WebSocket option. Observation starts when enabled;
 old login outcomes cannot be reconstructed from token timestamps.
 
@@ -94,7 +94,7 @@ v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
 annotations, used by HA 2026.9.4. It checks parameter names without evaluating
 HA's type-only imports. Unsupported/error tracking also exposes a safe
 `tracking_reason` in entities and the dashboard, plus a warning in Core logs.
-After updating, restart Core, reload the browser resource with `?v=0.1.12`,
+After updating, restart Core, reload the browser resource with `?v=0.1.13`,
 and reconnect clients after enabling session tracking. If tracking is still
 unsupported, report the diagnostic shown on the dashboard.
 
@@ -103,7 +103,7 @@ unsupported, report the diagnostic shown on the dashboard.
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.12`
+- URL: `/ha_security/ha-security-card.js?v=0.1.13`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with

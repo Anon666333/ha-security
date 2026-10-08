@@ -162,3 +162,25 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity.extra_state_attributes["tokens"][0]["last_used_ip"], "192.0.2.1")
         self.monitor.expose_network = False
         self.assertNotIn("tokens", activity.extra_state_attributes)
+
+    async def test_recorder_exclusions_keep_live_details_and_summary_history(self):
+        import json
+        await self.monitor.async_refresh()
+        self.monitor.expose_network = True
+        self.monitor.sessions.start()
+        connection = SimpleNamespace(user=self.account, refresh_token_id="record", remote="192.0.2.1")
+        self.monitor.sessions.observe(connection, newly_connected=True)
+        self.monitor.sessions.close(connection)
+        original = dict(self.monitor.history.sessions[0])
+        self.monitor.history.sessions.extend(dict(original, session_id=str(i)) for i in range(100))
+        entity = self.module.UserTokenSensor(self.monitor, self.account.id, "session_history_count")
+        attributes = entity.extra_state_attributes
+        self.assertGreater(len(json.dumps(attributes).encode()), 16384)
+        recorded = {key: value for key, value in attributes.items() if key not in type(entity)._unrecorded_attributes}
+        self.assertLess(len(json.dumps(recorded).encode()), 16384)
+        self.assertEqual(recorded["session_history_total"], 101)
+        self.assertEqual(entity.native_value, 101)
+        self.assertEqual(len(attributes["session_history"]), 100)
+        self.assertEqual(len(self.monitor.history.serialize()["sessions"]), 101)
+        self.assertTrue({"tokens", "connections", "ip_observations", "login_events", "active_connections"}.issubset(type(entity)._unrecorded_attributes))
+        self.assertEqual(self.module.GlobalLoginSensor._unrecorded_attributes, frozenset({"login_events"}))
