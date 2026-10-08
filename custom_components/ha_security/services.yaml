@@ -5,24 +5,30 @@ query_audit:
     text:
       name: Search text
       selector:
-        text:
+        text: null
     user_id:
-      name: Home Assistant user ID
+      name: User
       selector:
-        text:
+        select:
+          options: []
+          mode: dropdown
+          custom_value: true
     kind:
       name: Event kind
       selector:
         select:
           options:
-            - baseline_initialized
-            - token_baseline
-            - new_token
-            - token_updated
-            - token_removed
-            - new_ip
-            - new_client
-            - service_call
+          - baseline_initialized
+          - token_baseline
+          - new_token
+          - token_updated
+          - token_removed
+          - new_ip
+          - new_client
+          - service_call
+          - login_success
+          - login_failure
+          - recognition_changed
     limit:
       name: Maximum results
       default: 100
@@ -41,44 +47,51 @@ query_audit:
           mode: box
 get_inventory:
   name: Get authentication inventory
-  description: Return safe token metadata and user IDs. Administrator access required.
+  description: Return safe user and token metadata with user names and IDs. Administrator
+    access required.
 scan_now:
   name: Scan authentication now
-  description: Refresh the inventory immediately without restarting. Administrator access required.
+  description: Refresh the inventory immediately without restarting. Administrator
+    access required.
 set_token_label:
   name: Name credential
-  description: Give a token record a friendly label. Empty label clears it. Requires admin access and a response.
+  description: Give a token record a friendly label. Empty label clears it. Requires
+    admin access and a response.
   fields:
     token_id:
       name: Token record ID
       required: true
       selector:
-        text:
+        text: null
     label:
       name: Friendly label
       required: true
       selector:
-        text:
+        text: null
 query_sessions:
   name: Search sessions
-  description: Search retained observed WebSocket connections. Requires admin access and a response.
+  description: Search retained observed WebSocket connections. Requires admin access
+    and a response.
   fields:
     text:
       name: Search text
       selector:
-        text:
+        text: null
     user_id:
-      name: User ID
+      name: User
       selector:
-        text:
+        select:
+          options: []
+          mode: dropdown
+          custom_value: true
     state:
       name: Connection state
       selector:
         select:
           options:
-            - connected
-            - closed
-            - interrupted
+          - connected
+          - closed
+          - interrupted
     limit:
       name: Result limit
       selector:
@@ -92,22 +105,26 @@ query_sessions:
         number:
           min: 0
           mode: box
-
 recognize_source:
   name: Recognize credential or source
-  description: Explicitly recognize or forget a user's credential record or IP. Repeated-failure warnings remain. Does not change Home Assistant authentication.
+  description: Explicitly recognize or forget a user's credential record or IP. Repeated-failure
+    warnings remain. Does not change Home Assistant authentication.
   fields:
     user_id:
       required: true
       selector:
-        text:
+        select:
+          options: []
+          mode: dropdown
+          custom_value: true
+      name: User
     token_id:
       selector:
-        text:
+        text: null
     ip:
       selector:
-        text:
+        text: null
     recognized:
       default: true
       selector:
-        boolean:
+        boolean: null

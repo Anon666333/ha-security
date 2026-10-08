@@ -1,7 +1,7 @@
 {
   "domain": "ha_security",
   "name": "HA Security",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "dependencies": [
     "websocket_api"
   ],

@@ -29,7 +29,7 @@ Everything is configured through the UI—no integration YAML is needed.
 In **Settings → Dashboards → Resources**, add a **JavaScript module**:
 
 ```text
-/ha_security/ha-security-card.js?v=0.1.11
+/ha_security/ha-security-card.js?v=0.1.12
 ```
 
 Enable Advanced mode in your profile if Resources is hidden. Create a separate dashboard, then paste [dashboards/security.yaml](dashboards/security.yaml) into its raw configuration editor. Refresh the browser.
@@ -46,6 +46,8 @@ The card is bundled with the integration; no extra frontend repository is needed
 ## Updates and help
 
 HACS installs versioned GitHub releases. After updating, restart Core and change the dashboard resource's version query to match the installed release.
+
+Audit and session actions show user names alongside IDs and offer a user dropdown.
 
 - [Release notes](CHANGELOG.md)
 - [Configuration, troubleshooting and development reference](docs/reference.md)

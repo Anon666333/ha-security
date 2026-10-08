@@ -14,7 +14,7 @@ from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .const import CONF_ENRICH_IP
 from .const import CONF_TRACK_SESSIONS, CONF_TRACK_LOGINS
 from .monitor import AuthMonitor
-from .audit import AuditStore, register_actions, remove_actions
+from .audit import AuditStore, register_actions, remove_actions, refresh_action_descriptions
 from .const import (
     CONF_RETENTION_DAYS, CONF_RECENT_MINUTES, CONF_EXPOSE_NETWORK,
     DEFAULT_RETENTION_DAYS, DEFAULT_RECENT_MINUTES,
@@ -83,7 +83,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         monitor.login_cleanup = install_login_adapter(hass, monitor)
     entry.async_on_unload(hass.bus.async_listen(EVENT_CALL_SERVICE, monitor.async_service_event))
     register_actions(hass, monitor)
+    async def refresh_choices():
+        await refresh_action_descriptions(hass, monitor)
+    entry.async_on_unload(monitor.subscribe(refresh_choices))
     try:
+        await refresh_choices()
         await hass.config_entries.async_forward_entry_setups(entry, [Platform.SENSOR])
     except Exception:
         unsubscribe()

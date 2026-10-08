@@ -96,7 +96,7 @@ class SessionTracker:
         self.status = "disabled"
 
     def view(self, user_id, network=False):
-        rows = [dict(row) for row in reversed(self.history.sessions) if row["user_id"] == user_id]
+        rows = [self.history.with_user_names(row) for row in reversed(self.history.sessions) if row["user_id"] == user_id]
         for row in rows:
             if "security_level" not in row:
                 row.update(session_assessment(self.history, row))

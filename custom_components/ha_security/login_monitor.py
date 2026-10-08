@@ -71,7 +71,7 @@ def install_login_adapter(hass, monitor, flow_class=None, token_class=None, auth
         state = capture.get()
         if auth is hass.auth and state is not None:
             try:
-                state.update(user_id=refresh_token.user.id, token_id=refresh_token.id,
+                state.update(user_id=refresh_token.user.id, user_name=getattr(refresh_token.user, "name", None), token_id=refresh_token.id,
                              client_id=safe_client(refresh_token.client_id), source_ip=safe_ip(remote_ip))
             except Exception as err:
                 monitor.login_status = "error"

@@ -27,6 +27,7 @@ async def async_snapshot(auth: Any) -> dict[str, list[dict[str, Any]]]:
         users.append({
             "user_id": user.id,
             "name": _metadata(user.name),
+            "user_name": _metadata(user.name),
             "is_active": _metadata(user.is_active),
             "is_owner": _metadata(user.is_owner),
             "system_generated": _metadata(user.system_generated),

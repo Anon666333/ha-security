@@ -13,7 +13,7 @@ def login_rows(history, now=None):
 
 
 def record_login(history, outcome, source_ip=None, user_id=None, token_id=None,
-                 client_id=None, failure_reason=None, now=None):
+                 client_id=None, failure_reason=None, now=None, user_name=None):
     now = now or utcnow()
     ip = safe_ip(source_ip)
     if outcome == "failure":
@@ -45,7 +45,7 @@ def record_login(history, outcome, source_ip=None, user_id=None, token_id=None,
     if len(failures) >= 10 and unfamiliar and new_credential:
         level = "likely_issue"
         reasons.append("Repeated failures followed by success with both an unfamiliar public IP and a new credential")
-    history.add("login_success", user_id, now, token_id=token_id, client_id=safe_client(client_id),
+    history.add("login_success", user_id, now, user_name=user_name, token_id=token_id, client_id=safe_client(client_id),
                 source_ip=ip, security_level=level, security_reasons=reasons,
                 correlated_failure_count=len(failures), correlated_failure_ids=[r["id"] for r in failures[-100:]],
                 correlated_failure_ids_truncated=len(failures) > 100,
@@ -60,7 +60,7 @@ def summary(history, user_id=None, status="observing", now=None, network=False, 
     relevant = rows if user_id is None else successes
     events = []
     for row in reversed(relevant[-100:] if include_events else []):
-        detail = dict(row)
+        detail = history.with_user_names(row)
         if network:
             detail["ip_context"] = history.ip_context.get(row.get("source_ip"), {})
         else:
