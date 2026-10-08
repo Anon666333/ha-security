@@ -1,5 +1,7 @@
 name: Tests
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   unit:
     runs-on: ubuntu-latest
@@ -13,6 +15,29 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install voluptuous==0.16.0 PyYAML Jinja2
       - run: python -m unittest discover -s tests -v
+      - run: python scripts/release.py
       - run: python -m compileall -q custom_components
       - run: node --check custom_components/ha_security/www/ha-security-card.js
       - run: node tests/frontend.test.cjs
+
+  release:
+    name: Publish tested release
+    needs: unit
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: ha-security-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Publish manifest version and changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/release.py --publish
