@@ -32,7 +32,12 @@ class HASecurityCard extends HTMLElement {
   field(label, value) { return `<div><dt>${esc(label)}</dt><dd>${esc(value || "Unknown")}</dd></div>`; }
   moreInfo(entity) { this.dispatchEvent(new CustomEvent("hass-more-info", {detail: {entityId: entity}, bubbles: true, composed: true})); }
   render() {
-    if (!this._hass) return;
+    if (!this._hass || this.composing) return;
+    const activeSearch = this.shadowRoot.activeElement;
+    const searchSelection = activeSearch?.matches?.("[data-search]") ? {
+      start: activeSearch.selectionStart, end: activeSearch.selectionEnd,
+      direction: activeSearch.selectionDirection,
+    } : null;
     const opened = new Set([...this.shadowRoot.querySelectorAll("details[open]")].map(el => el.dataset.id));
     const accounts = this.entities("refresh_tokens");
     const overview = this.entities("overview")[0];
@@ -90,7 +95,14 @@ class HASecurityCard extends HTMLElement {
     this.shadowRoot.querySelector("[data-select-user]").onchange = event => {this.user = event.target.value; this.render();};
     this.shadowRoot.querySelector("[data-select-user]").value = this.user;
     this.shadowRoot.querySelector("[data-filter]").onchange = event => {this.filter = event.target.value; this.render();};
-    this.shadowRoot.querySelector("[data-search]").oninput = event => {const cursor = event.target.selectionStart; this.query = event.target.value; this.render(); const input = this.shadowRoot.querySelector("[data-search]"); input.focus(); input.setSelectionRange(cursor,cursor);};
+    const search = this.shadowRoot.querySelector("[data-search]");
+    search.oninput = event => {this.query = event.target.value; this.render();};
+    search.oncompositionstart = () => {this.composing = true;};
+    search.oncompositionend = event => {this.composing = false; this.query = event.target.value; this.render();};
+    if (searchSelection) {
+      search.focus({preventScroll: true});
+      search.setSelectionRange(searchSelection.start, searchSelection.end, searchSelection.direction);
+    }
     this.shadowRoot.querySelectorAll("[data-info]").forEach(el => el.onclick = () => this.moreInfo(el.dataset.info));
     this.shadowRoot.querySelectorAll("[data-recognize]").forEach(el => el.onclick = async () => {
       try { await this._hass.callWS({type:"call_service",domain:"ha_security",service:"recognize_source",service_data:{user_id:el.dataset.userId,token_id:el.dataset.recognize},return_response:true}); }

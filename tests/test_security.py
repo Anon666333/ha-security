@@ -134,3 +134,24 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
             history.set_token_label("unknown", "Unknown")
         history.set_token_label("a", "")
         self.assertNotIn("a", history.token_labels)
+
+    def test_readable_identity_backfill_rename_and_unknown_login(self):
+        history = SecurityHistory()
+        history.observe({"users": [{"user_id": "u", "name": "Zoë"}], "tokens": []})
+        history.add("service_call", "u", token={"user_id": "u"})
+        row = history.query(text="zoë")["records"][0]
+        self.assertEqual(row["user_name"], "Zoë")
+        self.assertEqual(row["token"]["user_name"], "Zoë")
+        row["token"]["user_name"] = "Changed copy"
+        self.assertNotIn("user_name", history.records[-1]["token"])
+        history.observe({"users": [{"user_id": "u", "name": "New name"}], "tokens": []})
+        row = history.query(kind="service_call")["records"][0]
+        self.assertEqual(row["user_name"], "Zoë")
+        self.assertEqual(row["current_user_name"], "New name")
+        history.add("login_failure")
+        self.assertIsNone(history.query(kind="login_failure")["records"][0]["user_name"])
+        stored = history.serialize()
+        stored.pop("user_names")
+        restored = SecurityHistory(data=json.loads(json.dumps(stored)))
+        self.assertEqual(restored.user_names["u"], "Zoë")
+        self.assertEqual(restored.query(kind="service_call")["records"][0]["user_name"], "Zoë")

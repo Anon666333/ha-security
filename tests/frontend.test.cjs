@@ -3,7 +3,15 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 let Card;
-const root = {innerHTML:'',querySelectorAll:()=>[],querySelector:()=>({})};
+let html = '';
+let searchNode;
+const root = {activeElement:null,querySelectorAll:()=>[],querySelector:selector=>selector==='[data-search]' ? searchNode : {}};
+const makeSearch = () => ({value:'',selectionStart:0,selectionEnd:0,selectionDirection:'none',
+  matches:selector=>selector==='[data-search]',
+  focus:()=>{root.activeElement=searchNode;},
+  setSelectionRange:(start,end,direction)=>{searchNode.selectionStart=start;searchNode.selectionEnd=end;searchNode.selectionDirection=direction;},
+});
+Object.defineProperty(root,'innerHTML',{get:()=>html,set:value=>{html=value;root.activeElement=null;searchNode=makeSearch();}});
 const context = {
   HTMLElement:class {attachShadow(){this.shadowRoot=root;}},
   customElements:{define:(_name,cls)=>{Card=cls;}},window:{},
@@ -28,3 +36,21 @@ card.filter='normal';card.render();assert.ok(root.innerHTML.includes('No matchin
 card.user='all';card.filter='login_failure';card.render();
 assert.ok(root.innerHTML.includes('1.1.1.1'));assert.ok(!root.innerHTML.includes('8.8.8.8'));
 console.log('Frontend attribution, filters and escaping checks passed');
+
+card.tab='live';card.filter='all';card.query='';card.render();
+searchNode.focus();searchNode.value='browser';searchNode.setSelectionRange(2,5,'backward');
+searchNode.oninput({target:searchNode});
+assert.equal(root.activeElement,searchNode);
+assert.deepEqual([searchNode.selectionStart,searchNode.selectionEnd,searchNode.selectionDirection],[2,5,'backward']);
+card.render(); // periodic refresh preserves focus and selection
+assert.equal(root.activeElement,searchNode);
+assert.deepEqual([searchNode.selectionStart,searchNode.selectionEnd],[2,5]);
+card.hass={states:Object.fromEntries(states.map(e=>[e.entity_id,{...e,last_updated:'updated'}]))};
+assert.equal(root.activeElement,searchNode); // HA state updates preserve focus too
+searchNode.oncompositionstart(); const composingNode=searchNode;
+searchNode.value='composing';searchNode.oninput({target:searchNode});card.render();
+assert.equal(searchNode,composingNode);
+searchNode.oncompositionend({target:searchNode});
+assert.equal(card.query,'composing');assert.equal(root.activeElement,searchNode);
+root.activeElement=null;card.render();assert.equal(root.activeElement,null); // no focus stealing
+console.log('Search focus, selection, live refresh and composition checks passed');

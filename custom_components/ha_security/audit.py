@@ -5,7 +5,7 @@ import json
 from copy import deepcopy
 
 from homeassistant.core import SupportsResponse
-from homeassistant.helpers.service import async_register_admin_service
+from homeassistant.helpers.service import async_register_admin_service, async_get_all_descriptions, async_set_service_schema
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
@@ -46,8 +46,8 @@ def register_actions(hass, monitor):
         return {
             "last_scan_success": monitor.last_scan_success,
             "last_successful_scan": monitor.last_successful_scan,
-            "users": (monitor.snapshot or {}).get("users", []),
-            "tokens": [token_metadata(row) for row in (monitor.snapshot or {}).get("tokens", [])],
+            "users": monitor.history.with_user_names((monitor.snapshot or {}).get("users", [])),
+            "tokens": monitor.history.with_user_names([token_metadata(row) for row in (monitor.snapshot or {}).get("tokens", [])]),
         }
 
     async def scan(call):
@@ -58,7 +58,20 @@ def register_actions(hass, monitor):
             monitor.history.set_token_label(call.data["token_id"], call.data["label"])
             monitor.audit.changed()
             await monitor._notify()
-        return {"success": True}
+        owner = next((row for row in (monitor.snapshot or {}).get("tokens", []) if row["token_id"] == call.data["token_id"]), None)
+        if owner is None:
+            owner = (monitor.history.previous or {}).get(call.data["token_id"])
+        if owner is None:
+            owner = next((row for row in reversed(monitor.history.sessions)
+                          if row.get("token_id") == call.data["token_id"]), None)
+        if owner is None:
+            event = next((row for row in reversed(monitor.history.records)
+                          if row.get("metadata", {}).get("token_id") == call.data["token_id"]), {})
+            owner = event.get("metadata")
+        return {"success": True, **monitor.history.with_user_names({
+            "user_id": owner.get("user_id") if owner else None,
+            "user_name": owner.get("user_name") if owner else None,
+        })}
 
     async def recognize(call):
         uid = call.data["user_id"]
@@ -86,7 +99,7 @@ def register_actions(hass, monitor):
                                 recognized=call.data.get("recognized", True))
             monitor.audit.changed()
             await monitor._notify()
-        return {"success": True}
+        return {"success": True, "user_id": uid, "user_name": monitor.history.user_names.get(uid)}
 
     async def sessions(call):
         monitor.history.prune()
@@ -96,13 +109,13 @@ def register_actions(hass, monitor):
                 continue
             if call.data.get("state") and row["state"] != call.data["state"]:
                 continue
-            detail = dict(row)
+            detail = monitor.history.with_user_names(row)
             if "security_level" not in detail:
                 detail.update(session_assessment(monitor.history, row))
             detail["label"] = monitor.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"]
             detail["ip_context"] = monitor.history.ip_context.get(row["source_ip"], {})
             detail["credential_ip_context"] = monitor.history.ip_context.get(row.get("credential_last_used_ip"), {})
-            if call.data.get("text") and call.data["text"].casefold() not in json.dumps(detail).casefold():
+            if call.data.get("text") and call.data["text"].casefold() not in json.dumps(detail, ensure_ascii=False).casefold():
                 continue
             values.append(detail)
         offset = call.data.get("offset", 0)
@@ -146,3 +159,34 @@ def register_actions(hass, monitor):
 def remove_actions(hass):
     for name in ("query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions", "recognize_source"):
         hass.services.async_remove(DOMAIN, name)
+
+
+def user_options(monitor, include_history=True):
+    users = {row["user_id"]: row.get("user_name") or row.get("name")
+             for row in (monitor.snapshot or {}).get("users", [])}
+    if include_history:
+        users = {**monitor.history.user_names, **users}
+    names = list(users.values())
+    return [{"value": uid, "label": (name or "Unnamed user")
+             + (f" · {uid[-8:]}" if not name or names.count(name) > 1 else "")
+             + (" (historical)" if uid not in {r["user_id"] for r in (monitor.snapshot or {}).get("users", [])} else "")}
+            for uid, name in sorted(users.items(), key=lambda item: ((item[1] or "").casefold(), item[0]))]
+
+
+async def refresh_action_descriptions(hass, monitor):
+    """Use HA's service-description API; never edit services.yaml at runtime."""
+    descriptions = await async_get_all_descriptions(hass)
+    for service in ("query_audit", "query_sessions", "recognize_source"):
+        description = deepcopy(descriptions.get(DOMAIN, {}).get(service, {}))
+        fields = description.get("fields", {})
+        if "user_id" not in fields:
+            continue
+        options = user_options(monitor, service != "recognize_source")
+        if service != "recognize_source":
+            options.insert(0, {"value": "", "label": "All users"})
+        selector = {"select": {"options": options, "mode": "dropdown", "custom_value": True}}
+        if fields["user_id"].get("selector") == selector:
+            continue
+        fields["user_id"].update(name="User", selector=selector)
+        async_set_service_schema(hass, DOMAIN, service, description)
+        hass.bus.async_fire("service_registered", {"domain": DOMAIN, "service": service})

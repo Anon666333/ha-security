@@ -2,6 +2,24 @@
 
 Published releases use `vMAJOR.MINOR.PATCH` tags matching the integration manifest.
 
+## [0.1.12]
+
+- Added user display names alongside IDs in audit history, token inventory, session results and login events.
+- Added live user dropdowns to Search audit history, Search sessions and Recognize credential or source. Raw IDs remain supported for automations.
+- Preserved recorded names through account renames/deletions and added name-aware audit search.
+- Added login and recognition event types to the audit filter.
+
+Restart Core and refresh the Actions page after updating. Dashboard resource: `/ha_security/ha-security-card.js?v=0.1.12`.
+
+## [0.1.11]
+
+- Shortened the README around features, installation and the dashboard. Moved detailed configuration and troubleshooting to a separate reference.
+- Added a dashboard screenshot using sample accounts and addresses.
+- Fixed search losing focus during live updates; cursor/selection remain in place and composition input is preserved.
+- Fixed user-entity reconciliation removing the integration-wide login sensors, which could leave dashboard login totals blank.
+
+After updating, restart Home Assistant, update the JavaScript module resource to `/ha_security/ha-security-card.js?v=0.1.11`, and refresh the browser. Dashboard YAML is unchanged.
+
 ## [0.1.10]
 
 - Added an original shield-and-home icon, with transparent standard/high-resolution and dark-mode assets bundled with the integration.

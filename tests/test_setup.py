@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import voluptuous as vol
+import yaml
+from copy import deepcopy
 
 
 def positive_int(value):
@@ -40,6 +42,9 @@ def load_entrypoint(track):
     modules["homeassistant.core"].SupportsResponse = SimpleNamespace(ONLY="only")
     modules["homeassistant.helpers.storage"].Store = FakeStore
     modules["homeassistant.helpers.service"].async_register_admin_service = Mock()
+    definitions = yaml.safe_load((Path(__file__).resolve().parents[1] / "custom_components/ha_security/services.yaml").read_text(encoding="utf-8"))
+    modules["homeassistant.helpers.service"].async_get_all_descriptions = AsyncMock(side_effect=lambda hass: {"ha_security": deepcopy(definitions)})
+    modules["homeassistant.helpers.service"].async_set_service_schema = Mock()
     modules["homeassistant.helpers.config_validation"].positive_int = positive_int
     modules["homeassistant.helpers.config_validation"].config_entry_only_config_schema = lambda domain: vol.Schema({})
     modules["homeassistant.helpers.event"].async_track_time_interval = track
@@ -93,6 +98,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.hass = SimpleNamespace(
             auth=SimpleNamespace(async_get_users=AsyncMock(return_value=[])),
             data={}, bus=SimpleNamespace(
+                async_fire=Mock(),
                 async_listen_once=Mock(return_value=Mock()),
                 async_listen=Mock(return_value=Mock()),
             ),
@@ -220,16 +226,18 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         response = await registered["query_audit"].args[3](SimpleNamespace(data={"kind": "baseline_initialized"}))
         self.assertEqual(response["total"], 1)
         monitor = self.hass.data["ha_security"]
-        monitor.snapshot["users"] = [{"user_id": "u"}]
+        monitor.snapshot["users"] = [{"user_id": "u", "name": "Matt", "user_name": "Matt"}]
+        monitor.history.user_names["u"] = "Matt"
         monitor.snapshot["tokens"] = [{"user_id": "u", "token_id": "record-a"}]
         response = await registered["recognize_source"].args[3](SimpleNamespace(data={"user_id": "u", "token_id": "record-a"}))
+        self.assertEqual(response["user_name"], "Matt")
         self.assertTrue(response["success"])
         self.assertIn("record-a", monitor.history.recognized["u"]["tokens"])
         with self.assertRaises(vol.Invalid):
             await registered["recognize_source"].args[3](SimpleNamespace(data={"user_id": "u", "token_id": "other"}))
         monitor.history.previous = {"record-a": {"user_id": "u"}}
         response = await registered["set_token_label"].args[3](SimpleNamespace(data={"token_id": "record-a", "label": "Phone"}))
-        self.assertEqual(response, {"success": True})
+        self.assertEqual(response, {"success": True, "user_id": "u", "user_name": "Matt"})
         self.assertEqual(monitor.history.token_labels["record-a"], "Phone")
         monitor.history.sessions = [{"session_id": "session-a", "token_id": "record-a", "user_id": "u",
                                      "client_name": "Mobile", "client_id": "mobile", "source_ip": "192.0.2.1",
@@ -237,6 +245,16 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         response = await registered["query_sessions"].args[3](SimpleNamespace(data={"text": "phone", "state": "closed"}))
         self.assertEqual(response["total"], 1)
         self.assertEqual(response["sessions"][0]["session_id"], "session-a")
+        self.assertEqual(response["sessions"][0]["user_name"], "Matt")
+        response = await registered["get_inventory"].args[3](SimpleNamespace(data={}))
+        self.assertEqual(response["users"][0]["user_name"], "Matt")
+        self.assertEqual(response["tokens"][0]["user_name"], "Matt")
+        monitor.snapshot["tokens"] = []
+        monitor.history.previous = {}
+        response = await registered["set_token_label"].args[3](SimpleNamespace(data={"token_id": "record-a", "label": "Historic phone"}))
+        self.assertEqual(response["user_name"], "Matt")
+        response = await registered["query_audit"].args[3](SimpleNamespace(data={"text": "Matt"}))
+        self.assertGreater(response["total"], 0)
 
     async def test_service_subscription_and_shutdown_flush(self):
         await self.module.async_setup_entry(self.hass, self.entry)
@@ -274,3 +292,37 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit.store.async_delay_save.call_count, 2)
         audit.history.add("new_test_record")
         self.assertNotEqual(len(data["records"]), len(audit.history.records))
+
+    async def test_named_user_dropdown_updates_and_historical_accounts(self):
+        await self.module.async_setup_entry(self.hass, self.entry)
+        monitor = self.hass.data["ha_security"]
+        monitor.snapshot["users"] = [{"user_id": "account-1", "name": "Matt"},
+                                      {"user_id": "account-2", "name": "Matt"}]
+        monitor.history.user_names.update({"old": "Former account", "account-1": "Matt"})
+        audit = self.module.audit_module
+        audit.async_set_service_schema.reset_mock()
+        await audit.refresh_action_descriptions(self.hass, monitor)
+        schemas = {call.args[2]: call.args[3] for call in audit.async_set_service_schema.call_args_list}
+        choices = schemas["query_audit"]["fields"]["user_id"]["selector"]["select"]["options"]
+        self.assertEqual(choices[0], {"value": "", "label": "All users"})
+        self.assertIn({"value": "old", "label": "Former account (historical)"}, choices)
+        self.assertEqual(len({row["label"] for row in choices}), len(choices))
+        self.assertTrue(schemas["query_audit"]["fields"]["user_id"]["selector"]["select"]["custom_value"])
+        self.assertIn("limit", schemas["query_audit"]["fields"])
+        self.assertEqual({row["value"] for row in schemas["recognize_source"]["fields"]["user_id"]["selector"]["select"]["options"]}, {"account-1", "account-2"})
+        audit.async_get_all_descriptions.side_effect = None
+        audit.async_get_all_descriptions.return_value = {"ha_security": schemas}
+        audit.async_set_service_schema.reset_mock()
+        await audit.refresh_action_descriptions(self.hass, monitor)
+        audit.async_set_service_schema.assert_not_called()
+        monitor.snapshot["users"][0]["name"] = "Updated name"
+        await audit.refresh_action_descriptions(self.hass, monitor)
+        self.assertEqual(audit.async_set_service_schema.call_count, 3)
+
+    async def test_description_setup_failure_cleans_runtime(self):
+        self.module.audit_module.async_get_all_descriptions.side_effect = RuntimeError("descriptions")
+        with self.assertRaisesRegex(RuntimeError, "descriptions"):
+            await self.module.async_setup_entry(self.hass, self.entry)
+        self.assertNotIn("ha_security", self.hass.data)
+        self.cancel.assert_called_once()
+        self.assertEqual(self.hass.services.async_remove.call_count, 6)

@@ -48,6 +48,10 @@ def safe_ip(value):
         return None
 
 
+def safe_user_name(value):
+    return value[:128] if isinstance(value, str) and value.strip() else None
+
+
 def token_metadata(token):
     """Only metadata is persisted; token ID is a record ID, not a credential."""
     return {
@@ -56,6 +60,7 @@ def token_metadata(token):
             "expire_at", "access_token_expiration_seconds",
         )
     } | {
+        "user_name": safe_user_name(token.get("user_name")),
         "client_id": safe_client(token.get("client_id")),
         "client_name": (token.get("client_name") or "")[:128] or None,
         "last_used_ip": safe_ip(token.get("last_used_ip")),
@@ -68,6 +73,7 @@ class SecurityHistory:
     def __init__(self, retention_days=30, data=None):
         self.retention_days = retention_days
         data = data or {}
+        self.user_names = dict(data.get("user_names", {}))
         self.records = data.get("records", [])
         self.previous = data.get("previous")
         self.known_ips = data.get("known_ips", {})
@@ -78,6 +84,17 @@ class SecurityHistory:
         self.sessions = data.get("sessions", [])
         self.recognized = data.get("recognized", {})
         self.prune()
+        def recover_names(value):
+            if isinstance(value, list):
+                for item in value:
+                    recover_names(item)
+            elif isinstance(value, dict):
+                uid, name = value.get("user_id"), safe_user_name(value.get("user_name"))
+                if uid and name:
+                    self.user_names.setdefault(uid, name)
+                for item in value.values():
+                    recover_names(item)
+        recover_names([self.records, self.sessions, self.previous, self.last_calls])
 
     def prune(self, now=None):
         cutoff = (now or utcnow()) - timedelta(days=self.retention_days)
@@ -106,16 +123,40 @@ class SecurityHistory:
                  and (parse_time(row.get("ended_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff]
         self.sessions = ended[-10000:] + active
 
+    def with_user_names(self, value):
+        """Return detached readable identities; retain names recorded at event time."""
+        if isinstance(value, list):
+            return [self.with_user_names(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        detail = {key: self.with_user_names(item) for key, item in value.items()}
+        if "user_id" in detail:
+            uid = detail["user_id"]
+            current = self.user_names.get(uid)
+            detail["user_name"] = safe_user_name(detail.get("user_name")) or current
+            if current and current != detail["user_name"]:
+                detail["current_user_name"] = current
+        return detail
+
     def add(self, kind, user_id=None, now=None, **metadata):
+        name = safe_user_name(metadata.pop("user_name", None)) or self.user_names.get(user_id)
+        if user_id and name:
+            self.user_names[user_id] = name
         self.records.append({
             "id": uuid.uuid4().hex, "timestamp": (now or utcnow()).isoformat(),
-            "kind": kind, "user_id": user_id, **metadata,
+            "kind": kind, "user_id": user_id, "user_name": name, **metadata,
         })
         self.prune(now)
 
     def observe(self, snapshot, now=None):
         now = now or utcnow()
         self.prune(now)
+        for user in snapshot["users"]:
+            name = safe_user_name(user.get("user_name") or user.get("name"))
+            if name:
+                self.user_names[user["user_id"]] = name
+        while len(self.user_names) > 10000:
+            del self.user_names[next(iter(self.user_names))]
         current = {row["token_id"]: token_metadata(row) for row in snapshot["tokens"]}
         baseline = self.previous is None
         old = self.previous or {}
@@ -178,23 +219,24 @@ class SecurityHistory:
               limit=100, offset=0):
         self.prune()
         rows = [
-            row for row in reversed(self.records)
+            self.with_user_names(row) for row in reversed(self.records)
             if (not user_id or row["user_id"] == user_id)
             and (not kind or row["kind"] == kind)
             and (not since or row["timestamp"] >= since)
             and (not until or row["timestamp"] <= until)
-            and (not text or text.casefold() in json.dumps(row).casefold())
+            and (not text or text.casefold() in json.dumps(self.with_user_names(row), ensure_ascii=False).casefold())
         ]
         return {"total": len(rows), "records": rows[offset:offset + limit]}
 
     def serialize(self):
         self.prune()
         return {
-            "records": self.records, "previous": self.previous,
+            "records": self.with_user_names(self.records), "previous": self.with_user_names(self.previous),
+            "user_names": self.user_names,
             "known_ips": self.known_ips, "known_clients": self.known_clients,
-            "last_calls": self.last_calls,
+            "last_calls": self.with_user_names(self.last_calls),
             "token_labels": self.token_labels, "ip_context": self.ip_context,
-            "sessions": self.sessions, "recognized": self.recognized,
+            "sessions": self.with_user_names(self.sessions), "recognized": self.recognized,
         }
 
     def set_token_label(self, token_id, label):
@@ -299,7 +341,7 @@ class SecurityHistory:
             observation["label"] = self.token_labels.get(observation["token_id"]) or observation.get("client_name") or observation.get("client_id") or "Unknown client"
             observation["ip_context"] = self.ip_context.get(observation["last_used_ip"], {})
         connections = rows + list(removed.values())
-        return {
+        return self.with_user_names({
             "recently_used_token_count": sum(row["recently_used"] for row in rows),
             "tokens": rows[:100],
             "tokens_total": len(rows),
@@ -311,4 +353,4 @@ class SecurityHistory:
             "connections": connections[:100],
             "connections_total": len(connections),
             "connections_truncated": len(connections) > 100,
-        }
+        })
