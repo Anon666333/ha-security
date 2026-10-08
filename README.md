@@ -22,7 +22,7 @@ The dashboard includes **Live connections**, **Session history**, **Credentials*
 4. In the integration's options, enable **Observe WebSocket sessions**, **Observe login outcomes** and **Expose IP/client details**. Public-IP enrichment is optional.
 5. Reconnect your browser/app so existing connections can be observed.
 
-Everything is configured through the UI—no integration YAML is needed.
+Everything is configured through the UI.
 
 ## Add the dashboard
 
@@ -54,3 +54,5 @@ Audit and session actions show user names alongside IDs and offer a user dropdow
 - [Report an issue](https://github.com/Anon666333/ha-security/issues)
 
 HA Security is an experimental, read-only custom integration. It does not block users or revoke credentials automatically.
+I built this for me, it was a gap that bothered me with Home Assistant, and I hope it helps someone else too :)
+Feel free to submit a PR if you see a gap in it, would love for this to to grow further!
