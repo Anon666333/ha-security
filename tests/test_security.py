@@ -155,3 +155,11 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         restored = SecurityHistory(data=json.loads(json.dumps(stored)))
         self.assertEqual(restored.user_names["u"], "Zoë")
         self.assertEqual(restored.query(kind="service_call")["records"][0]["user_name"], "Zoë")
+
+    def test_count_only_skips_history_detail_expansion(self):
+        now = utcnow()
+        history = SecurityHistory()
+        tokens = [{"token_id": "a", "user_id": "u", "last_used_at": now.isoformat()}]
+        with patch.object(history, "with_user_names", side_effect=AssertionError("Details expanded")):
+            self.assertEqual(history.token_activity("u", tokens, now=now, include_details=False),
+                             {"recently_used_token_count": 1})

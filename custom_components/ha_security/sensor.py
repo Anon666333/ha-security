@@ -146,7 +146,10 @@ class UserTokenSensor(SensorEntity):
             value = login_summary(self.monitor.history, self.user_id, self.monitor.login_status, include_events=False)[self.metric]
             return parse_time(value) if self.metric == "last_successful_login" else value
         if self.metric == "recently_used_tokens":
-            return self._activity["recently_used_token_count"]
+            return self.monitor.history.token_activity(
+                self.user_id, [row for row in self.monitor.snapshot["tokens"] if row["user_id"] == self.user_id],
+                self.monitor.recent_minutes, include_details=False,
+            )["recently_used_token_count"]
         if self.metric in ("active_websocket_connections", "session_history_count"):
             detail = self.monitor.sessions.view(self.user_id)
             return detail["active_connection_count"] if self.metric == "active_websocket_connections" else detail["session_history_total"]

@@ -172,15 +172,20 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         self.monitor.sessions.observe(connection, newly_connected=True)
         self.monitor.sessions.close(connection)
         original = dict(self.monitor.history.sessions[0])
-        self.monitor.history.sessions.extend(dict(original, session_id=str(i)) for i in range(100))
+        self.monitor.history.sessions.extend(dict(original, session_id=str(i)) for i in range(9999))
         entity = self.module.UserTokenSensor(self.monitor, self.account.id, "session_history_count")
-        attributes = entity.extra_state_attributes
+        with patch.object(self.monitor.history, "with_user_names", wraps=self.monitor.history.with_user_names) as expand:
+            attributes = entity.extra_state_attributes
+            # Recursive calls include fields; only 100 session dictionaries are expanded.
+            session_rows = [call for call in expand.call_args_list
+                            if isinstance(call.args[0], dict) and "session_id" in call.args[0]]
+            self.assertEqual(len(session_rows), 100)
         self.assertGreater(len(json.dumps(attributes).encode()), 16384)
         recorded = {key: value for key, value in attributes.items() if key not in type(entity)._unrecorded_attributes}
         self.assertLess(len(json.dumps(recorded).encode()), 16384)
-        self.assertEqual(recorded["session_history_total"], 101)
-        self.assertEqual(entity.native_value, 101)
+        self.assertEqual(recorded["session_history_total"], 10000)
+        self.assertEqual(entity.native_value, 10000)
         self.assertEqual(len(attributes["session_history"]), 100)
-        self.assertEqual(len(self.monitor.history.serialize()["sessions"]), 101)
+        self.assertEqual(len(self.monitor.history.serialize()["sessions"]), 10000)
         self.assertTrue({"tokens", "connections", "ip_observations", "login_events", "active_connections"}.issubset(type(entity)._unrecorded_attributes))
         self.assertEqual(self.module.GlobalLoginSensor._unrecorded_attributes, frozenset({"login_events"}))
