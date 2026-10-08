@@ -10,14 +10,16 @@
           "retention_days": "Audit retention (days)",
           "recent_minutes": "Recent observation window (minutes)",
           "expose_network": "Expose IP/client details and retained observations on entities",
-          "enrich_ip": "Look up public IP context (optional)"
+          "enrich_ip": "Look up public IP context (optional)",
+          "track_sessions": "Observe WebSocket sessions (experimental)"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Default 300 seconds.",
           "retention_days": "Local history; default 30 days, maximum 365. Also capped at 10,000 events.",
           "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
           "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder.",
-          "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate."
+          "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate.",
+          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default."
         }
       }
     },
@@ -38,14 +40,16 @@
           "retention_days": "Audit retention (days)",
           "recent_minutes": "Recent observation window (minutes)",
           "expose_network": "Expose IP/client details and retained observations on entities",
-          "enrich_ip": "Look up public IP context (optional)"
+          "enrich_ip": "Look up public IP context (optional)",
+          "track_sessions": "Observe WebSocket sessions (experimental)"
         },
         "data_description": {
           "scan_interval": "Minimum 30 seconds. Changes restart the monitor.",
           "retention_days": "Local history; default 30 days, maximum 365. Also capped at 10,000 events.",
           "recent_minutes": "Default 15 minutes. Recently observed does not mean currently online.",
           "expose_network": "Off by default. Enabling exposes source metadata to entity readers and Recorder.",
-          "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate."
+          "enrich_ip": "Off by default. Sends public IPs to ipwho.is over HTTPS and to your DNS resolver for hostname lookup. No usernames or credentials are sent. Locations are approximate.",
+          "track_sessions": "Uses internal HA connection lifecycle hooks. Reconnect existing clients after enabling. Tracks WebSocket connections, not password logins or HTTP/cloud activity. Off by default."
         }
       }
     },

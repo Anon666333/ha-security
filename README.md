@@ -2,7 +2,81 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.5 security view
+## v0.1.6 session dashboard
+
+### Install the interactive dashboard
+
+After updating and restarting HA, open **Settings → Dashboards → Resources**
+(enable Advanced mode in your profile if Resources is hidden). Add a resource:
+
+- URL: `/ha_security/ha-security-card.js?v=0.1.6`
+- Type: **JavaScript module**
+
+Replace the separate dashboard's raw configuration with
+[dashboards/security.yaml](dashboards/security.yaml), then refresh the browser.
+The card is bundled with the integration; no extra HACS frontend repository
+or external scripts are needed. When a future release changes the card, update
+the resource's version query and refresh. If HA reports "Custom element doesn't
+exist: ha-security-card", check the module resource and restart/refresh.
+
+The entity-powered card provides summary totals, selectable user cards,
+Live / History / Credentials tabs, client/IP/hostname/organisation search,
+status filters, expandable metadata and IP timelines, entity more-info links,
+and admin credential renaming. It follows HA theme colours and adapts to mobile
+widths. It does not fetch external data in the browser. Filtering covers the
+bounded entity lists; **Search sessions** provides pagination over older rows.
+
+### Observe actual WebSocket connections
+
+In integration options enable **Observe WebSocket sessions (experimental)**.
+Reconnect your existing browser/app clients after enabling or reloading it.
+This records distinct authenticated WebSocket connections, including concurrent
+connections sharing a credential. Per-user **Active websocket connections**
+and **Session history count** sensors expose current connections and ended
+session rows. An **HA Security Overview** entity supplies dashboard totals.
+IP/client detail exposure and public IP enrichment remain separate options.
+
+Tracking uses a narrowly scoped adapter observing HA's internal `AuthPhase`
+successful return, `ActiveConnection` incoming-command handler and close handler.
+Constructor compatibility is checked; production connection creation is recorded
+only after the authentication handler returns successfully. HA's global dispatcher
+signals expose totals without a user or connection object. The adapter does
+not inspect command contents, change authentication, or fingerprint browsers.
+Original lifecycle methods always run. Observation failures stop session
+tracking without blocking HA's authentication or command handlers. Unsupported
+method signatures report `unsupported`; the active-count sensor is unavailable
+when tracking is disabled, unsupported or in error rather than reporting zero.
+Internal APIs can change between HA releases, so real-instance validation is
+required. Unloading restores the wrappers it still owns.
+
+Coverage begins when enabled. Existing connections may have cached their old
+handlers and cannot be reliably enumerated; reconnect them for coverage.
+Connection establishment is **not a proven password login**. `last_seen_at`
+records an incoming WebSocket command, which can include app heartbeat or
+subscription traffic, not necessarily a human action. Outgoing updates alone
+do not advance it. A connected socket is not proof that a person is present.
+HTTP requests, token refreshes and cloud-service activity remain credential
+observations, not counted live sessions. Physical device identity is not proven;
+the original client metadata and optional nickname supply the device label.
+
+Connection rows store observed start, first observation, last incoming command,
+source IP, client metadata, token record ID and close time. Unknown start times
+remain unknown. Shutdown/reload/crash boundaries mark old observations
+**interrupted**, with an observation-end time and unknown disconnect time;
+persisted connections are never restored as online. Closed/interrupted session
+history uses the configured audit retention and a separate 10,000-session cap;
+live connection rows are retained until tracking sees closure/stops. Entity
+lists expose up to 100 current and 100 historical rows per user. IP enrichment
+also considers recent session IPs at the next inventory scan, including recently
+closed connections; details may arrive after the initial session row.
+
+Manual validation: enable tracking, reconnect two tabs using the same account,
+verify distinct observed connections/IP metadata, send a harmless command,
+close one tab, inspect its historical row, reload the integration and confirm
+remaining observations become interrupted before reconnecting. Check the
+card's search, status/user filters, details, rename action and mobile layout.
+The adapter and card have local tests and a synthetic browser preview; this
+release has not been validated against a live HA instance.
 
 The MVP combines authentication inventory, new IP/client/token observations,
 user-context service-call auditing, per-user entities, a native Lovelace dashboard
@@ -10,7 +84,8 @@ template, and searchable local history.
 
 ### Per-user security entities
 
-Each user gets seven sensors: refresh-token count, recently used token count, last recorded token use, last
+Each user gets nine sensors: active WebSocket count, historical session count,
+refresh-token count, recently used token count, last recorded token use, last
 attributed service call, recently observed status, known IP count, and new
 IP/client/token observation count in retained history. Existing refresh-token
 sensor unique IDs are preserved.
@@ -32,6 +107,8 @@ Under Developer tools → Actions, choose:
 - **HA Security: Scan authentication now** to trigger an immediate scan.
 - **HA Security: Name credential** to set a nickname using its token record ID.
   An empty label clears it. Labels are local preferences, not auth changes.
+- **HA Security: Search sessions** for retained WebSocket session rows with text,
+  user/state filters and pagination (up to 500 rows per response).
 
 These actions return response data. Request/display the action response; in an
 automation use a `response_variable`. They use HA's admin-service guard
@@ -88,17 +165,16 @@ an admin-only dashboard does not change entity access permissions.
 Use [dashboards/security.yaml](dashboards/security.yaml). Create a new dashboard
 in Settings → Dashboards, choose administrator-only access, take control if
 needed, and paste the file into its raw configuration editor. The template uses
-native Markdown cards and automatically discovers HA Security user sensors;
-no custom dashboard cards or fixed entity names are required.
+the bundled HA Security card and automatically discovers HA Security sensors;
+no fixed entity names or separate frontend downloads are required.
 
-The dashboard shows counts/status/timestamps and optional source metadata.
-Search lives in the admin Actions interface; a dedicated interactive audit
-table is not part of this MVP. The dashboard is provided separately and is
+The dashboard shows session and credential details with search and filters.
+Full audit pagination lives in the admin Actions interface. The dashboard is provided separately and is
 never automatically installed or overwritten.
 
 ### Validation checklist
 
-After updating via HACS and restarting Core, verify the seven sensors per user,
+After updating via HACS and restarting Core, verify the nine sensors per user,
 run Scan authentication now and Get authentication inventory, make a harmless
 user-attributed service call, then search for that event. Check options reload,
 history preservation across restart, and non-admin denial of audit actions.
@@ -201,7 +277,7 @@ are cleaned up. You can then remove the custom integration folder.
 ### Per-user credential activity and IP history (v0.1.4)
 
 Each discovered user appears as a **User account** service device under
-HA Security in Devices & services, with all seven security sensors grouped
+HA Security in Devices & services, with all nine security sensors grouped
 under it. Devices use the stable authentication user ID, so account renames
 update the device name without replacing entities. Existing entities retain
 their unique IDs and attach to the user device when loaded after updating.

@@ -1,7 +1,8 @@
 {
   "domain": "ha_security",
   "name": "HA Security",
-  "version": "0.1.5",
+  "version": "0.1.6",
+  "dependencies": ["websocket_api"],
   "loggers": ["custom_components.ha_security"],
   "config_flow": true,
   "single_config_entry": true,

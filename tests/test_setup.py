@@ -189,6 +189,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defaults["recent_minutes"], 15)
         self.assertFalse(defaults["expose_network"])
         self.assertFalse(defaults["enrich_ip"])
+        self.assertFalse(defaults["track_sessions"])
         for field, invalid in (("retention_days", 0), ("retention_days", 366),
                                ("recent_minutes", 0), ("recent_minutes", 1441)):
             with self.assertRaises(vol.Invalid):
@@ -199,7 +200,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         register.reset_mock()
         await self.module.async_setup_entry(self.hass, self.entry)
         registered = {item.args[2]: item for item in register.call_args_list}
-        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now", "set_token_label"})
+        self.assertEqual(set(registered), {"query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions"})
         for item in registered.values():
             self.assertEqual(item.kwargs["supports_response"], "only")
         response = await registered["scan_now"].args[3](SimpleNamespace(data={}))
@@ -213,6 +214,12 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         response = await registered["set_token_label"].args[3](SimpleNamespace(data={"token_id": "record-a", "label": "Phone"}))
         self.assertEqual(response, {"success": True})
         self.assertEqual(monitor.history.token_labels["record-a"], "Phone")
+        monitor.history.sessions = [{"session_id": "session-a", "token_id": "record-a", "user_id": "u",
+                                     "client_name": "Mobile", "client_id": "mobile", "source_ip": "192.0.2.1",
+                                     "state": "closed", "ended_at": monitor.last_successful_scan}]
+        response = await registered["query_sessions"].args[3](SimpleNamespace(data={"text": "phone", "state": "closed"}))
+        self.assertEqual(response["total"], 1)
+        self.assertEqual(response["sessions"][0]["session_id"], "session-a")
 
     async def test_service_subscription_and_shutdown_flush(self):
         await self.module.async_setup_entry(self.hass, self.entry)
@@ -237,7 +244,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
             await self.module.async_setup_entry(self.hass, self.entry)
         self.assertNotIn("ha_security", self.hass.data)
         self.cancel.assert_called_once()
-        self.assertEqual(self.hass.services.async_remove.call_count, 4)
+        self.assertEqual(self.hass.services.async_remove.call_count, 5)
 
     async def test_storage_batches_without_indefinite_deferral(self):
         await self.module.async_setup_entry(self.hass, self.entry)
