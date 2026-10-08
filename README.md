@@ -211,9 +211,10 @@ This lets you enable debug logging after setup and still see the current invento
 Failed scans retain the latest successful
 snapshot and retry at the next interval. Polling is cancelled at HA shutdown.
 
-No credentials are created, changed, or revoked. No browser fingerprinting,
-auth-store file reads, monkey patches, or confirmed online-session
-classification are included. Only explicitly selected metadata enters snapshots;
+No credentials are created, changed, or revoked. No browser fingerprinting or
+auth-store file reads are used. Opt-in session tracking wraps internal HA
+methods as described above; it observes connections, not human presence.
+Only explicitly selected metadata enters snapshots;
 raw token values, JWT keys, credential objects, and auth-object representations
 are never logged or retained by this integration.
 
@@ -338,7 +339,7 @@ scans. HTTPS has a five-second timeout; reverse DNS has a three-second timeout.
 Successful provider results are cached for seven days; failures retry after an
 hour. The local cache is capped at 1,000 IPs and pruned by audit retention.
 Disabling enrichment stops new lookups but leaves retained cached context.
-No historical-IP lookup occurs unless that IP is observed on a current token.
+Lookup candidates include current token IPs and recent observed session IPs.
 
 Update the separately supplied dashboard YAML to see the connection table,
 context and grouped IP history. Entity detail lists remain capped at 100 rows;
