@@ -1,6 +1,7 @@
 """HA storage and admin-only search/inventory actions."""
 
 import voluptuous as vol
+import json
 from copy import deepcopy
 
 from homeassistant.core import SupportsResponse
@@ -58,6 +59,25 @@ def register_actions(hass, monitor):
             await monitor._notify()
         return {"success": True}
 
+    async def sessions(call):
+        monitor.history.prune()
+        values = []
+        for row in reversed(monitor.history.sessions):
+            if call.data.get("user_id") and row["user_id"] != call.data["user_id"]:
+                continue
+            if call.data.get("state") and row["state"] != call.data["state"]:
+                continue
+            detail = dict(row)
+            detail["label"] = monitor.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"]
+            detail["ip_context"] = monitor.history.ip_context.get(row["source_ip"], {})
+            if call.data.get("text") and call.data["text"].casefold() not in json.dumps(detail).casefold():
+                continue
+            values.append(detail)
+        offset = call.data.get("offset", 0)
+        monitor.audit.changed()
+        return {"total": len(values), "sessions": values[offset:offset + call.data.get("limit", 100)],
+                "tracking_status": monitor.sessions.status}
+
     schema = vol.Schema({
         vol.Optional("text", default=""): str,
         vol.Optional("user_id"): str,
@@ -69,6 +89,13 @@ def register_actions(hass, monitor):
         ("query_audit", query, schema),
         ("get_inventory", inventory, vol.Schema({})),
         ("scan_now", scan, vol.Schema({})),
+        ("query_sessions", sessions, vol.Schema({
+            vol.Optional("text", default=""): str,
+            vol.Optional("user_id"): str,
+            vol.Optional("state"): vol.In(("connected", "closed", "interrupted")),
+            vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
+            vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
+        })),
         ("set_token_label", label, vol.Schema({
             vol.Required("token_id"): str,
             vol.Required("label"): vol.All(str, vol.Length(max=128)),
@@ -81,5 +108,5 @@ def register_actions(hass, monitor):
 
 
 def remove_actions(hass):
-    for name in ("query_audit", "get_inventory", "scan_now", "set_token_label"):
+    for name in ("query_audit", "get_inventory", "scan_now", "set_token_label", "query_sessions"):
         hass.services.async_remove(DOMAIN, name)

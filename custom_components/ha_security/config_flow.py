@@ -7,6 +7,7 @@ from homeassistant.core import callback
 
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .const import CONF_ENRICH_IP
+from .const import CONF_TRACK_SESSIONS
 from .const import (
     CONF_RETENTION_DAYS, CONF_RECENT_MINUTES, CONF_EXPOSE_NETWORK,
     DEFAULT_RETENTION_DAYS, DEFAULT_RECENT_MINUTES,
@@ -31,6 +32,7 @@ def settings_schema(settings):
             vol.All(int, vol.Range(min=1, max=1440)),
         vol.Optional(CONF_EXPOSE_NETWORK, default=settings.get(CONF_EXPOSE_NETWORK, False)): bool,
         vol.Optional(CONF_ENRICH_IP, default=settings.get(CONF_ENRICH_IP, False)): bool,
+        vol.Optional(CONF_TRACK_SESSIONS, default=settings.get(CONF_TRACK_SESSIONS, False)): bool,
     })
 
 

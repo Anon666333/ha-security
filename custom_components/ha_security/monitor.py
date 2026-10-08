@@ -8,6 +8,7 @@ from typing import Any
 
 from .auth_monitor import async_snapshot
 from .security import SecurityHistory
+from .sessions import SessionTracker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +29,21 @@ class AuthMonitor:
         self.expose_network = expose_network
         self.stopped = False
         self.enricher = None
+        self.sessions = SessionTracker(self.history, self.session_changed)
+        self.session_cleanup = None
+        self._session_timer = None
+
+    def session_changed(self):
+        if self.stopped:
+            return
+        if self.audit:
+            self.audit.changed()
+        if self._session_timer is None:
+            def publish():
+                self._session_timer = None
+                if not self.stopped:
+                    asyncio.create_task(self._notify())
+            self._session_timer = asyncio.get_running_loop().call_later(1, publish)
 
     def subscribe(self, listener):
         """Register a platform update callback and return its cleanup."""
@@ -43,6 +59,12 @@ class AuthMonitor:
 
     async def async_close(self):
         self.stopped = True
+        if self.session_cleanup:
+            self.session_cleanup()
+            self.session_cleanup = None
+        if self._session_timer:
+            self._session_timer.cancel()
+            self._session_timer = None
         async with self._lock:
             if self.audit:
                 await self.audit.flush()
@@ -96,7 +118,8 @@ class AuthMonitor:
                 try:
                     await self.enricher(self.history, [
                         row["last_used_ip"] for row in current["tokens"] if row.get("last_used_ip")
-                    ])
+                    ] + [row["source_ip"] for row in self.history.sessions[-100:]
+                         if row.get("source_ip")])
                 except Exception as err:
                     _LOGGER.debug("IP context lookup failed (%s)", type(err).__name__)
             if self.audit:

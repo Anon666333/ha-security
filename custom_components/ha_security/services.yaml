@@ -59,3 +59,36 @@ set_token_label:
       required: true
       selector:
         text:
+query_sessions:
+  name: Search sessions
+  description: Search retained observed WebSocket connections. Requires admin access and a response.
+  fields:
+    text:
+      name: Search text
+      selector:
+        text:
+    user_id:
+      name: User ID
+      selector:
+        text:
+    state:
+      name: Connection state
+      selector:
+        select:
+          options:
+            - connected
+            - closed
+            - interrupted
+    limit:
+      name: Result limit
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+    offset:
+      name: Offset
+      selector:
+        number:
+          min: 0
+          mode: box

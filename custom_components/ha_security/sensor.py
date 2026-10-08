@@ -8,7 +8,7 @@ from .const import DOMAIN
 
 METRICS = ("refresh_tokens", "last_token_use", "last_service_call",
            "recently_observed", "known_ip_count", "new_observation_count",
-           "recently_used_tokens")
+           "recently_used_tokens", "active_websocket_connections", "session_history_count")
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -17,6 +17,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities = {}
     registry = er.async_get(hass)
     devices = dr.async_get(hass)
+    overview = SecurityOverviewSensor(monitor)
+    async_add_entities([overview])
 
     async def reconcile():
         if monitor.last_scan_success:
@@ -70,7 +72,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                     else:
                         # Older HA registries permit devices shared by config entries.
                         devices.async_update_device(device.id, remove_config_entry_id=entry.entry_id)
-        for entity in entities.values():
+        for entity in (*entities.values(), overview):
             if entity.hass is not None:
                 entity.async_write_ha_state()
 
@@ -119,6 +121,8 @@ class UserTokenSensor(SensorEntity):
 
     @property
     def available(self):
+        if self.metric == "active_websocket_connections":
+            return self.monitor.sessions.status == "observing" and self._user is not None
         return self.monitor.last_scan_success and self._user is not None
 
     @property
@@ -127,6 +131,9 @@ class UserTokenSensor(SensorEntity):
             return None
         if self.metric == "recently_used_tokens":
             return self._activity["recently_used_token_count"]
+        if self.metric in ("active_websocket_connections", "session_history_count"):
+            detail = self.monitor.sessions.view(self.user_id)
+            return detail["active_connection_count"] if self.metric == "active_websocket_connections" else detail["session_history_total"]
         if self.metric != "refresh_tokens":
             value = self.monitor.user_summary(self.user_id)[self.metric]
             if self.metric == "recently_observed":
@@ -157,7 +164,11 @@ class UserTokenSensor(SensorEntity):
             "last_successful_scan": self.monitor.last_successful_scan,
             "ha_security_metric": self.metric,
             "recent_window_minutes": self.monitor.recent_minutes,
+            "user_id": self.user_id,
+            "user_name": user["name"] or self.user_id,
         }
+        if self.metric in ("active_websocket_connections", "session_history_count"):
+            attributes.update(self.monitor.sessions.view(self.user_id, self.monitor.expose_network))
         if self.metric == "recently_used_tokens":
             attributes.update({
                 "meaning": "Credentials used within the recent window; live connections are not observed",
@@ -180,3 +191,40 @@ class UserTokenSensor(SensorEntity):
                     "latest_client": summary["latest_client"],
                 })
         return attributes
+
+
+class SecurityOverviewSensor(SensorEntity):
+    """One entity supplies dashboard totals and session coverage."""
+
+    _attr_should_poll = False
+    _attr_name = "HA Security Overview"
+    _attr_unique_id = f"{DOMAIN}_overview"
+    _attr_icon = "mdi:shield-account"
+
+    def __init__(self, monitor):
+        self.monitor = monitor
+
+    @property
+    def available(self):
+        return self.monitor.last_scan_success
+
+    @property
+    def native_value(self):
+        return len((self.monitor.snapshot or {}).get("users", []))
+
+    @property
+    def extra_state_attributes(self):
+        users = (self.monitor.snapshot or {}).get("users", [])
+        return {
+            "ha_security_metric": "overview",
+            "users": len(users),
+            "connected_websockets": sum(row["state"] == "connected" for row in self.monitor.history.sessions)
+                if self.monitor.sessions.status == "observing" else None,
+            "recently_observed_users": sum(self.monitor.user_summary(user["user_id"])["recently_observed"] for user in users),
+            "retained_sessions": sum(row["state"] != "connected" for row in self.monitor.history.sessions),
+            "new_observations": sum(row["kind"] in ("new_ip", "new_client", "new_token") for row in self.monitor.history.records),
+            "tracking_status": self.monitor.sessions.status,
+            "tracking_started_at": self.monitor.sessions.started_at,
+            "network_details_enabled": self.monitor.expose_network,
+            "last_successful_scan": self.monitor.last_successful_scan,
+        }

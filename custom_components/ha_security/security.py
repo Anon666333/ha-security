@@ -75,6 +75,7 @@ class SecurityHistory:
         self.last_calls = data.get("last_calls", {})
         self.token_labels = data.get("token_labels", {})
         self.ip_context = data.get("ip_context", {})
+        self.sessions = data.get("sessions", [])
         self.prune()
 
     def prune(self, now=None):
@@ -99,6 +100,10 @@ class SecurityHistory:
             ip: row for ip, row in self.ip_context.items()
             if (parse_time(row.get("looked_up_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff
         }
+        active = [row for row in self.sessions if row.get("state") == "connected"]
+        ended = [row for row in self.sessions if row.get("state") != "connected"
+                 and (parse_time(row.get("ended_at")) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff]
+        self.sessions = ended[-10000:] + active
 
     def add(self, kind, user_id=None, now=None, **metadata):
         self.records.append({
@@ -188,12 +193,14 @@ class SecurityHistory:
             "known_ips": self.known_ips, "known_clients": self.known_clients,
             "last_calls": self.last_calls,
             "token_labels": self.token_labels, "ip_context": self.ip_context,
+            "sessions": self.sessions,
         }
 
     def set_token_label(self, token_id, label):
         known = set(self.previous or {}) | set(self.token_labels) | {
             row.get("metadata", {}).get("token_id") for row in self.records
         }
+        known |= {row.get("token_id") for row in self.sessions}
         if token_id not in known:
             raise ValueError("Unknown token record ID")
         label = label.strip()

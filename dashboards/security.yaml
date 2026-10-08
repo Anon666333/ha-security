@@ -1,88 +1,10 @@
+# Add /ha_security/ha-security-card.js?v=0.1.6 as a JavaScript module resource.
 title: HA Security
 views:
   - title: Security
     path: security
     icon: mdi:shield-account
+    type: panel
     cards:
-      - type: markdown
-        title: Security observations
-        content: >-
-          Recent observations combine recorded token use and user-attributed
-          service invocations. They do not prove a person is online or identify
-          a physical device/location. New IP/client observations are leads to
-          investigate, not confirmed threats.
-      - type: markdown
-        title: Users and credential grants
-        content: |
-          {% for entity in states.sensor if entity.attributes.get('ha_security_metric') == 'refresh_tokens' %}
-          ### {{ entity.name | e }}
-          - Token records: **{{ entity.state | e }}**
-          - Account enabled: {{ entity.attributes.get('is_active') }}
-          - Owner: {{ entity.attributes.get('is_owner') }}
-          - System user: {{ entity.attributes.get('system_generated') }}
-          - Recently observed: **{{ entity.attributes.get('recently_observed') }}**
-          - Last token use: {{ entity.attributes.get('last_token_use') or 'Not observed' }}
-          - Last attributed service call: {{ entity.attributes.get('last_service_call') or 'Not observed' }}
-          - Known IPs: {{ entity.attributes.get('known_ip_count', 0) }}
-          - New observations in retained history: {{ entity.attributes.get('new_observation_count', 0) }}
-          - Last successful scan: {{ entity.attributes.get('last_successful_scan') }}
-          {% if entity.attributes.get('latest_ip') %}
-          - Latest token source IP: {{ entity.attributes.get('latest_ip') | e }}
-          - Latest token client: {{ entity.attributes.get('latest_client') | e }}
-          {% endif %}
-          {% else %}
-          No HA Security user sensors found. Add the integration or run Scan authentication now.
-          {% endfor %}
-      - type: markdown
-        title: Credentials and source IPs
-        content: |
-          {% macro clean(value) -%}{{ (value or 'Unknown') | string | replace('|', '/') | replace('\n', ' ') | replace('\r', ' ') | e }}{%- endmacro %}
-          {% macro when(value) -%}{% if value and as_datetime(value, none) %}{{ relative_time(as_datetime(value)) }} ago ({{ value | e }}){% else %}Not observed{% endif %}{%- endmacro %}
-          {% for entity in states.sensor if entity.attributes.get('ha_security_metric') == 'recently_used_tokens' %}
-          ### {{ entity.name | e }}
-          Recently used credentials: **{{ entity.state | e }}** within {{ entity.attributes.get('recent_window_minutes') }} minutes. This is not a live session count.
-          {% if 'connections' not in entity.attributes %}
-          Enable **Expose IP/client details and retained observations on entities** in integration options to see credential details.
-          {% elif not entity.attributes.get('connections') %}
-          No current or retained credentials.
-          {% else %}
-
-          | Credential | Latest IP | Last token use | Activity | Changes in retained history |
-          | --- | --- | --- | --- | --- |
-          {% for token in entity.attributes.get('connections', []) -%}
-          | {{ clean(token.get('label')) }} | {{ clean(token.get('last_used_ip')) }} ({{ clean(token.get('ip_scope')) }}) | {{ when(token.get('last_used_at')) }} | {{ clean(token.get('activity')) | replace('_', ' ') }} | {% if token.get('new_credential') %}New credential; {% endif %}{% if token.get('new_ip') %}New IP; {% endif %}{% if token.get('ip_changed') %}IP changed{% endif %} |
-          {% endfor %}
-          {% for token in entity.attributes.get('connections', []) %}
-          **{{ clean(token.get('label')) }}** — original client: {{ clean(token.get('client_name') or token.get('client_id')) }}; record: {{ clean(token.get('token_id')) }}
-          - Created: {{ when(token.get('created_at')) }}
-          - First retained observation: {{ when(token.get('first_observed_at')) }}
-          {% if token.get('removed_at') %}
-          - Removal observed: {{ when(token.get('removed_at')) }}
-          {% endif %}
-          {% set context = token.get('ip_context', {}) %}
-          {% if context %}
-          - Hostname: {{ clean(context.get('hostname')) }}; organisation: {{ clean(context.get('organisation')) }}; ASN: {{ clean(context.get('asn')) }}
-          - Approximate IP location: {{ clean(context.get('city')) }}, {{ clean(context.get('region')) }}, {{ clean(context.get('country')) }}; lookup: {{ clean(context.get('lookup_status')) }} ({{ when(context.get('looked_up_at')) }})
-          {% endif %}
-          {% for observation in entity.attributes.get('ip_observations', []) if observation.get('token_id') == token.get('token_id') %}
-          - IP history: {{ clean(observation.get('last_used_ip')) }} — observed {{ when(observation.get('observed_at')) }}; token last used {{ when(observation.get('last_used_at')) }}
-          {% endfor %}
-          {% endfor %}
-          {% endif %}
-          {% if entity.attributes.get('connections_truncated') or entity.attributes.get('ip_observations_truncated') %}
-          Lists are capped at 100 rows. Search the audit for further retained observations.
-          {% endif %}
-          {% else %}
-          No credential activity sensors found.
-          {% endfor %}
-      - type: markdown
-        title: Search the local audit
-        content: >-
-          Open Developer tools → Actions → HA Security: Search audit history.
-          Filter by text, user ID, or event kind, and request the response.
-          Use Get authentication inventory to map users to IDs and inspect
-          client/IP/created/last-used metadata. Audit actions require admin access.
-          Use Name credential with a token record ID and friendly label to name
-          a connection; an empty label clears the nickname. Change markers
-          describe retained history, not a threat assessment. IP location is
-          approximate and may identify a proxy/cloud service rather than a person.
+      - type: custom:ha-security-card
+        title: Security centre

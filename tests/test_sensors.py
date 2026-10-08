@@ -86,12 +86,12 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         def add(new):
             for entity in new:
                 entity.hass = hass
-                entity.entity_id = "sensor." + entity.user_id + "_" + entity.metric
+                entity.entity_id = "sensor." + getattr(entity, "user_id", "overview") + "_" + getattr(entity, "metric", "overview")
                 entities.append(entity)
         await self.module.async_setup_entry(hass, entry, add)
-        self.assertEqual(len(entities), 7)
-        identifiers = entities[0].device_info["identifiers"]
-        self.assertTrue(all(entity.device_info["identifiers"] == identifiers for entity in entities))
+        self.assertEqual(len(entities), 10)
+        identifiers = entities[1].device_info["identifiers"]
+        self.assertTrue(all(entity.device_info["identifiers"] == identifiers for entity in entities[1:]))
         self.device_entries = [SimpleNamespace(id="first-device", identifiers=identifiers)]
         self.account.name = "Renamed account"
         await self.monitor.async_refresh()
@@ -100,11 +100,11 @@ class SensorTests(unittest.IsolatedAsyncioTestCase):
         extra.id = "second"
         self.auth.async_get_users.return_value = [self.account, extra]
         await self.monitor.async_refresh()
-        self.assertEqual(len(entities), 14)
-        self.assertEqual(entities[7].native_value, 0)
+        self.assertEqual(len(entities), 19)
+        self.assertEqual(entities[10].native_value, 0)
         self.auth.async_get_users.return_value = [extra]
         await self.monitor.async_refresh()
-        self.assertTrue(entities[0].removed)
+        self.assertTrue(entities[1].removed)
         self.devices.async_remove_device.assert_called_once_with("first-device")
         cleanups[0]()
         self.assertEqual(self.monitor.listeners, [])
