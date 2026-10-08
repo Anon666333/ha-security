@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>HA Security</title>
+  <path fill="#0284c7" d="M128 16 224 52v68c0 58-38 97-96 120-58-23-96-62-96-120V52Z"/>
+  <path fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" d="m76 125 52-43 52 43m-88-9v64h72v-64"/>
+  <circle fill="#fff" cx="128" cy="139" r="10"/>
+  <path fill="#fff" d="m123 144-3 19h16l-3-19Z"/>
+</svg>

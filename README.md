@@ -1,12 +1,20 @@
 # HA Security
 
+![HA Security icon](custom_components/ha_security/brand/icon.png)
+
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
+
+## v0.1.10 branding and releases
+
+Adds bundled integration icons and automatic, tested GitHub releases for HACS.
+See [Branding and versioned updates](#branding-and-versioned-updates) for the
+release workflow and [CHANGELOG.md](CHANGELOG.md) for update notes.
 
 ## v0.1.9 login activity and security assessment
 
 After installing and restarting Core, enable **Observe login outcomes** in the
 integration's UI options, then update the dashboard module URL to
-`/ha_security/ha-security-card.js?v=0.1.9`. No dashboard YAML changes are required.
+`/ha_security/ha-security-card.js?v=0.1.10`. No dashboard YAML changes are required.
 This is independent of the WebSocket option. Observation starts when enabled;
 old login outcomes cannot be reconstructed from token timestamps.
 
@@ -82,7 +90,7 @@ v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
 annotations, used by HA 2026.9.4. It checks parameter names without evaluating
 HA's type-only imports. Unsupported/error tracking also exposes a safe
 `tracking_reason` in entities and the dashboard, plus a warning in Core logs.
-After updating, restart Core, reload the browser resource with `?v=0.1.9`,
+After updating, restart Core, reload the browser resource with `?v=0.1.10`,
 and reconnect clients after enabling session tracking. If tracking is still
 unsupported, report the diagnostic shown on the dashboard.
 
@@ -91,7 +99,7 @@ unsupported, report the diagnostic shown on the dashboard.
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.9`
+- URL: `/ha_security/ha-security-card.js?v=0.1.10`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with
@@ -315,8 +323,8 @@ steps; an open development PR alone is not an installable HACS version.
 
 HACS manages file downloads and updates; Home Assistant manages the integration's
 setup and options. Restart Home Assistant after installing an update.
-Without releases, HACS downloads the default branch. Published versioned releases
-provide explicit versions to install and update to. No default-catalog approval
+Published versioned releases provide explicit versions to install and update to.
+The development branch is hidden from the HACS version picker. No default-catalog approval
 is needed to use a custom repository.
 
 ## Manual installation on a test instance
@@ -464,3 +472,46 @@ relying on it, verify startup on your version, a user with no tokens, normal and
 long-lived token metadata, updated last-used fields after client authentication,
 record removal after manual revocation, and shutdown/restart without duplicate
 polling. Do not share raw auth storage or tokens as test evidence.
+
+
+## Branding and versioned updates
+
+The integration bundles an original shield-and-home icon in
+`custom_components/ha_security/brand/`, with transparent 256px and 512px assets
+and dark-mode equivalents. The editable SVG is included. Home Assistant 2026.3+
+loads these local assets without a separate brands submission:
+[Home Assistant branding documentation](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/).
+
+HACS has an [open local-branding frontend issue](https://github.com/hacs/integration/issues/5402)
+which can leave a placeholder even when HA displays the icon correctly. This repo
+ships the supported assets; no undocumented `icon` setting is added to `hacs.json`.
+
+Releases follow stable semantic versions: the manifest contains `0.1.10`, and
+its matching GitHub tag/release is `v0.1.10`. HACS uses **published GitHub releases**
+for named versions; creating a tag alone is insufficient:
+[HACS version documentation](https://hacs.xyz/docs/publish/start/#versions).
+No version belongs in `hacs.json`.
+
+For each future release:
+
+1. Start a feature/fix branch and bump `manifest.json`: patch for fixes and small
+   additions, minor for a larger feature milestone or incompatible changes while
+   pre-1.0, and major for incompatible changes once 1.0 is reached.
+2. Add the matching version's notes to `CHANGELOG.md`, including any update steps.
+   Update the README and dashboard module resource query to the same version.
+3. Open a PR. CI checks the release metadata, Python 3.13/3.14 behavior and frontend.
+4. Merge when ready. Only a tested push to `main` publishes the matching tag and
+   GitHub release automatically. The workflow needs repository Actions enabled
+   and permission to create releases. If publication fails, correct the cause and
+   rerun the workflow; an existing tag at the same tested commit can be reused.
+5. Verify the release's **Publish tested release** job succeeded. HACS will pick up
+   the published version on its next refresh. Install the update, restart Core,
+   update the dashboard resource query and refresh the browser.
+
+Published tags are never moved, and published releases are never overwritten.
+Repeated runs with an already published manifest version create no update. Keep
+version bumps separate from unreleased intermediate commits: once GitHub releases
+exist, changes on `main` alone are not a new HACS version. The workflow uses
+GitHub's source archive; no custom release ZIP or runtime dependency is required.
+Run `python scripts/release.py` locally to validate release metadata without
+publishing anything.

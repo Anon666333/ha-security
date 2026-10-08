@@ -1,0 +1,22 @@
+# Changelog
+
+Published releases use `vMAJOR.MINOR.PATCH` tags matching the integration manifest.
+
+## [0.1.10]
+
+- Added an original shield-and-home icon, with transparent standard/high-resolution and dark-mode assets bundled with the integration.
+- Added automatic versioned GitHub releases after both Python test jobs and frontend checks pass on `main`.
+- Added release metadata checks, matching dashboard resource versions and changelog notes. Repeated runs preserve existing releases and never move published tags.
+- HACS now offers published versions rather than the development branch.
+
+After updating, restart Home Assistant. For the security dashboard, update the JavaScript module resource to `/ha_security/ha-security-card.js?v=0.1.10` and refresh the browser. Existing dashboard YAML remains compatible.
+
+Home Assistant 2026.3+ uses the bundled icon. HACS versions affected by upstream issue #5402 may still show their placeholder; the integration assets cannot fix that frontend issue.
+
+## [0.1.9]
+
+- Added optional login-outcome observation, per-user login entities and same-IP failure correlation.
+- Added explainable security flags, a Login activity dashboard tab and explicit credential/source recognition.
+- Included separate connection-source and credential-last-use IP context from v0.1.8.
+
+Earlier versions were distributed from the default branch without published releases.
