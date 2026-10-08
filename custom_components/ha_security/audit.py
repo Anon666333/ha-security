@@ -70,6 +70,7 @@ def register_actions(hass, monitor):
             detail = dict(row)
             detail["label"] = monitor.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"]
             detail["ip_context"] = monitor.history.ip_context.get(row["source_ip"], {})
+            detail["credential_ip_context"] = monitor.history.ip_context.get(row.get("credential_last_used_ip"), {})
             if call.data.get("text") and call.data["text"].casefold() not in json.dumps(detail).casefold():
                 continue
             values.append(detail)

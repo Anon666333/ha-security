@@ -60,6 +60,31 @@ class SessionTests(unittest.TestCase):
             uninstall()
         self.assertEqual(self.tracker.view("u")["active_connection_count"], 0)
 
+    def test_connection_and_credential_ips_are_distinct_scoped_and_frozen(self):
+        self.user.refresh_tokens["record"].last_used_ip = "8.8.8.8"
+        self.tracker.start()
+        connection = Connection(self.hass, self.user, "192.168.0.10")
+        self.tracker.observe(connection, newly_connected=True)
+        self.history.ip_context["8.8.8.8"] = {"hostname": "public.example"}
+        row = self.tracker.view("u", True)["active_connections"][0]
+        self.assertEqual(row["source_ip"], "192.168.0.10")
+        self.assertEqual(row["credential_last_used_ip"], "8.8.8.8")
+        self.assertEqual(row["credential_ip_context"]["hostname"], "public.example")
+        self.assertEqual(row["ip_context"], {})
+        self.tracker.refresh_credential_ips([{"token_id": "record", "user_id": "other", "last_used_ip": "1.1.1.1"}])
+        self.assertEqual(self.tracker.view("u", True)["active_connections"][0]["credential_last_used_ip"], "8.8.8.8")
+        record = {"token_id": "record", "user_id": "u", "last_used_ip": "1.1.1.1", "last_used_at": "2026-10-07T12:00:00+00:00"}
+        self.tracker.refresh_credential_ips([record])
+        row = self.tracker.view("u", True)["active_connections"][0]
+        self.assertEqual(row["source_ip"], "192.168.0.10")
+        self.assertEqual(row["credential_last_used_ip"], "1.1.1.1")
+        hidden = self.tracker.view("u")["active_connections"][0]
+        self.assertFalse(any(key.startswith("credential_ip") or key.startswith("credential_last") for key in hidden))
+        self.tracker.close(connection)
+        record["last_used_ip"] = "9.9.9.9"
+        self.tracker.refresh_credential_ips([record])
+        self.assertEqual(self.tracker.view("u", True)["session_history"][0]["credential_last_used_ip"], "1.1.1.1")
+
     def test_existing_connection_unknown_start_and_restart_not_online(self):
         a = Connection(self.hass, self.user)
         self.tracker.start()

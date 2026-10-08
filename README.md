@@ -2,13 +2,28 @@
 
 A standalone Home Assistant custom integration proof-of-concept for read-only authentication visibility.
 
-## v0.1.6 session dashboard
+## v0.1.8 connection and credential addresses
+
+Session details now keep the **connection source IP** separate from the same
+credential's **last recorded IP**, with independent hostname and location details.
+LAN access normally shows a private source IP. A public credential IP can reflect
+another connection or cloud/proxy use; it is not inferred as the LAN session's
+public address. Both appear when available, with credential-use and observation
+timestamps. Other credentials remain in the Credentials tab rather than being
+assigned to a session just because they belong to the same user.
+
+Live rows refresh credential metadata on each inventory scan. Closed history keeps
+the last observed metadata; existing historical rows may lack these fields.
+Network details and public IP enrichment still require their existing UI options.
+Public geolocation cannot locate a private address, and no public address is guessed.
+
+### Session compatibility
 
 v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
 annotations, used by HA 2026.9.4. It checks parameter names without evaluating
 HA's type-only imports. Unsupported/error tracking also exposes a safe
 `tracking_reason` in entities and the dashboard, plus a warning in Core logs.
-After updating, restart Core, reload the browser resource with `?v=0.1.7`,
+After updating, restart Core, reload the browser resource with `?v=0.1.8`,
 and reconnect clients after enabling session tracking. If tracking is still
 unsupported, report the diagnostic shown on the dashboard.
 
@@ -17,7 +32,7 @@ unsupported, report the diagnostic shown on the dashboard.
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.7`
+- URL: `/ha_security/ha-security-card.js?v=0.1.8`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with

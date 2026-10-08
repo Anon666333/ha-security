@@ -114,12 +114,13 @@ class AuthMonitor:
                         )
             self.snapshot = current
             self.history.observe(current)
+            self.sessions.refresh_credential_ips(current["tokens"])
             if self.enricher:
                 try:
                     await self.enricher(self.history, [
                         row["last_used_ip"] for row in current["tokens"] if row.get("last_used_ip")
-                    ] + [row["source_ip"] for row in self.history.sessions[-100:]
-                         if row.get("source_ip")])
+                    ] + [row[key] for row in self.history.sessions[-100:]
+                         for key in ("source_ip", "credential_last_used_ip") if row.get(key)])
                 except Exception as err:
                     _LOGGER.debug("IP context lookup failed (%s)", type(err).__name__)
             if self.audit:

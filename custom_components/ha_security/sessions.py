@@ -1,6 +1,7 @@
 """Bounded observed WebSocket sessions and isolated optional HA adapter."""
 
 from functools import wraps
+from datetime import datetime
 import inspect
 import logging
 import uuid
@@ -53,6 +54,10 @@ class SessionTracker:
                 "closed_at": None, "ended_at": None, "state": "connected",
                 "start_known": newly_connected, "end_reason": None,
                 "transport": "websocket",
+                "credential_last_used_ip": safe_ip(getattr(token, "last_used_ip", None)),
+                "credential_last_used_at": getattr(token, "last_used_at", None).isoformat()
+                    if isinstance(getattr(token, "last_used_at", None), datetime) else None,
+                "credential_ip_observed_at": now,
             }
             self.live[key] = row
             self.history.sessions.append(row)
@@ -69,6 +74,17 @@ class SessionTracker:
             row.update(state="closed", closed_at=now, ended_at=now, end_reason="connection_closed")
             self.changed()
 
+    def refresh_credential_ips(self, tokens):
+        """Link latest same-token observations while live; freeze on closure."""
+        by_id = {row["token_id"]: row for row in tokens}
+        now = utcnow().isoformat()
+        for row in self.live.values():
+            token = by_id.get(row["token_id"])
+            if token and token["user_id"] == row["user_id"]:
+                row["credential_last_used_ip"] = safe_ip(token.get("last_used_ip"))
+                row["credential_last_used_at"] = token.get("last_used_at")
+                row["credential_ip_observed_at"] = now
+
     def stop(self):
         now = utcnow().isoformat()
         for row in self.live.values():
@@ -83,8 +99,10 @@ class SessionTracker:
             row["label"] = self.history.token_labels.get(row["token_id"]) or row["client_name"] or row["client_id"] or "Unknown client"
             if network:
                 row["ip_context"] = self.history.ip_context.get(row["source_ip"], {})
+                row["credential_ip_context"] = self.history.ip_context.get(row.get("credential_last_used_ip"), {})
             else:
-                for key in ("source_ip", "client_id", "client_name", "token_id", "label"):
+                for key in ("source_ip", "client_id", "client_name", "token_id", "label",
+                            "credential_last_used_ip", "credential_last_used_at", "credential_ip_observed_at"):
                     row.pop(key, None)
         active = [row for row in rows if row["state"] == "connected"]
         ended = [row for row in rows if row["state"] != "connected"]
