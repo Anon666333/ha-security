@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from time import monotonic
 
 from .auth_monitor import async_snapshot
 from .security import SecurityHistory
@@ -31,10 +32,16 @@ class AuthMonitor:
         self.enricher = None
         self.sessions = SessionTracker(self.history, self.session_changed)
         self.session_cleanup = None
+        self.rest_read_cleanup = None
+        self.rest_read_status = "disabled"
+        self.rest_cleanup = None
+        self.rest_status = "disabled"
+        self.rest_reason = None
         self.login_cleanup = None
         self.login_status = "disabled"
         self.login_reason = None
         self.login_started_at = None
+        self._summary_cache = {}
         self._session_timer = None
 
     def session_changed(self):
@@ -47,7 +54,7 @@ class AuthMonitor:
                 self._session_timer = None
                 if not self.stopped:
                     asyncio.create_task(self._notify())
-            self._session_timer = asyncio.get_running_loop().call_later(1, publish)
+            self._session_timer = asyncio.get_running_loop().call_later(10, publish)
 
     def subscribe(self, listener):
         """Register a platform update callback and return its cleanup."""
@@ -63,6 +70,12 @@ class AuthMonitor:
 
     async def async_close(self):
         self.stopped = True
+        if self.rest_read_cleanup:
+            self.rest_read_cleanup()
+            self.rest_read_cleanup = None
+        if self.rest_cleanup:
+            self.rest_cleanup()
+            self.rest_cleanup = None
         if self.session_cleanup:
             self.session_cleanup()
             self.session_cleanup = None
@@ -127,7 +140,7 @@ class AuthMonitor:
                     await self.enricher(self.history, [
                         row["last_used_ip"] for row in current["tokens"] if row.get("last_used_ip")
                     ] + [row["source_ip"] for row in self.history.records[-100:]
-                         if row["kind"] in ("login_success", "login_failure") and row.get("source_ip")]
+                         if row["kind"] in ("login_success", "login_failure", "rest_action", "rest_request") and row.get("source_ip")]
                       + [row[key] for row in self.history.sessions[-100:]
                          for key in ("source_ip", "credential_last_used_ip") if row.get(key)])
                 except Exception as err:
@@ -140,17 +153,29 @@ class AuthMonitor:
             return True
 
     async def async_service_event(self, event):
+        # Dashboard queries must not themselves trigger another entity refresh.
+        if event.data.get("domain") == "ha_security":
+            return
         async with self._lock:
             if self.stopped:
                 return
-            if self.history.service_call(event.data, event.context):
+            if (self.sessions.link_service_event(event.data, event.context)
+                    or self.history.service_call(event.data, event.context, persist=False)):
                 if self.audit:
                     self.audit.changed()
-                await self._notify()
+                self.session_changed()
 
     def user_summary(self, user_id):
         tokens = [
             row for row in (self.snapshot or {}).get("tokens", [])
             if row["user_id"] == user_id
         ]
-        return self.history.summary(user_id, tokens, self.recent_minutes)
+        key = (self.recent_minutes, int(monotonic() // 10), len(self.history.records),
+               self.history.records[-1]["id"] if self.history.records else None,
+               self.history.last_calls.get(user_id, {}).get("timestamp"),
+               tuple((r.get("token_id"), r.get("token_type"), r.get("last_used_at")) for r in tokens))
+        cached = self._summary_cache.get(user_id)
+        if cached is None or cached[0] != key:
+            cached = (key, self.history.summary(user_id, tokens, self.recent_minutes))
+            self._summary_cache[user_id] = cached
+        return cached[1]

@@ -29,7 +29,7 @@ Everything is configured through the UI.
 In **Settings → Dashboards → Resources**, add a **JavaScript module**:
 
 ```text
-/ha_security/ha-security-card.js?v=0.1.13
+/ha_security/ha-security-card.js?v=0.1.23
 ```
 
 Enable Advanced mode in your profile if Resources is hidden. Create a separate dashboard, then paste [dashboards/security.yaml](dashboards/security.yaml) into its raw configuration editor. Refresh the browser.
@@ -38,6 +38,7 @@ The card is bundled with the integration; no extra frontend repository is needed
 
 ## A few things to know
 
+- Credential actions include core REST service POSTs (including LLTs used by n8n) and WebSocket service calls when session tracking is enabled. REST observation starts when the integration loads; it also captures core GETs for status, states, config, services, events and components. Other API reads and device execution outcomes are outside coverage. HA credential names are used unless you set a dashboard nickname.
 - Connections are observed WebSockets, not a count of physical devices. Multiple tabs can share a credential.
 - Login counts cover observed authorization-code successes and explicit password/MFA failures. Failed users are usually unknown; same-IP links are correlations.
 - IP locations are approximate. Cellular IP changes alone do not trigger concern, and a Normal flag is not a guarantee of safety.

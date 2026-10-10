@@ -7,6 +7,7 @@ import json
 import re
 from urllib.parse import urlsplit, urlunsplit
 import uuid
+from time import monotonic
 
 from .const import AUDIT_LIMIT
 
@@ -97,6 +98,7 @@ class SecurityHistory:
         recover_names([self.records, self.sessions, self.previous, self.last_calls])
 
     def prune(self, now=None):
+        self._last_prune = monotonic()
         cutoff = (now or utcnow()) - timedelta(days=self.retention_days)
         self.records = [
             row for row in self.records
@@ -146,7 +148,10 @@ class SecurityHistory:
             "id": uuid.uuid4().hex, "timestamp": (now or utcnow()).isoformat(),
             "kind": kind, "user_id": user_id, "user_name": name, **metadata,
         })
-        self.prune(now)
+        if now is not None or monotonic() - self._last_prune >= 60:
+            self.prune(now)
+        elif len(self.records) > AUDIT_LIMIT:
+            del self.records[:-AUDIT_LIMIT]
 
     def observe(self, snapshot, now=None):
         now = now or utcnow()
@@ -188,7 +193,7 @@ class SecurityHistory:
             self.add("token_removed", old[tid]["user_id"], now, token_id=tid)
         self.previous = current
 
-    def service_call(self, data, context, now=None):
+    def service_call(self, data, context, now=None, persist=True):
         """Record an invocation attributed by HA context, not its outcome."""
         uid = getattr(context, "user_id", None)
         if not uid:
@@ -211,22 +216,58 @@ class SecurityHistory:
             "parent_id": getattr(context, "parent_id", None),
             "outcome": "not_observed",
         }
-        self.add("service_call", uid, now, **metadata)
-        self.last_calls[uid] = self.records[-1]
+        if persist:
+            self.add("service_call", uid, now, **metadata)
+            self.last_calls[uid] = self.records[-1]
+        else:
+            self.last_calls[uid] = {"timestamp": (now or utcnow()).isoformat(), "user_id": uid, **metadata}
         return True
 
     def query(self, text="", user_id=None, kind=None, since=None, until=None,
-              limit=100, offset=0):
+              limit=100, offset=0, token_id=None, category=None, exclude_actions=None, exclude_token_ids=None):
         self.prune()
+        from fnmatch import fnmatchcase
+        excluded = exclude_actions or []
         rows = [
-            self.with_user_names(row) for row in reversed(self.records)
+            self.describe_record(row) for row in reversed(self.records)
             if (not user_id or row["user_id"] == user_id)
+            and (not token_id or (row.get("token_id") or row.get("metadata", {}).get("token_id")) == token_id)
+            and ((row.get("token_id") or row.get("metadata", {}).get("token_id")) not in (exclude_token_ids or []))
+            and (category != "inventory" or row["kind"] in {"baseline_initialized", "token_baseline", "new_token", "token_updated", "token_removed", "new_ip", "new_client"} or (row.get("domain") == "system_log" and row.get("service") == "write"))
+            and (category != "actions" or (row["kind"] in {"websocket_action", "rest_action", "rest_request"} and not (row.get("domain") == "system_log" and row.get("service") == "write")))
+            and (not excluded or not any(fnmatchcase(row.get("method", "") + " " + row.get("endpoint", "") if row["kind"] == "rest_request" else row.get("domain", "") + "." + row.get("service", ""), pattern) for pattern in excluded))
             and (not kind or row["kind"] == kind)
-            and (not since or row["timestamp"] >= since)
-            and (not until or row["timestamp"] <= until)
-            and (not text or text.casefold() in json.dumps(self.with_user_names(row), ensure_ascii=False).casefold())
+            and (not since or parse_time(row["timestamp"]) >= parse_time(since))
+            and (not until or parse_time(row["timestamp"]) <= parse_time(until))
+            and (not text or text.casefold() in json.dumps(self.describe_record(row), ensure_ascii=False).casefold())
         ]
-        return {"total": len(rows), "records": rows[offset:offset + limit]}
+        return {"total": len(rows), "records": rows[offset:offset + limit], **self.query_info(len(rows), offset, limit)}
+
+    def query_info(self, total, offset, limit):
+        return {"summary": f"Showing {min(limit, max(0, total-offset))} of {total} matching retained observations.",
+                "offset": offset, "limit": limit, "next_offset": offset+limit if offset+limit < total else None,
+                "coverage": {"retention_days": self.retention_days, "audit_limit": AUDIT_LIMIT,
+                    "oldest_retained_at": min((r["timestamp"] for r in self.records), default=None),
+                    "newest_retained_at": max((r["timestamp"] for r in self.records), default=None),
+                    "limitations": "Retained observations only; not every REST request. WebSocket service commands are linked at context creation; execution outcomes are not observed. Older service-call records identify only a user. Core REST service POSTs are linked to their authenticated credential; Allowlisted core GET endpoints include status, states, config, services, events and components. Other REST endpoints and WebSocket command types are outside coverage. Connections cover observed WebSockets only."}}
+
+    def describe_record(self, row):
+        detail = self.with_user_names(row)
+        metadata = detail.get("metadata") or {}
+        tid = detail.get("token_id") or metadata.get("token_id")
+        credential = metadata or (self.previous or {}).get(tid, {})
+        if not credential and detail.get("session_id"):
+            credential = next((s for s in reversed(self.sessions)
+                               if s.get("session_id") == detail["session_id"] and s.get("token_id") == tid), {})
+        detail["credential_label"] = self.token_labels.get(tid) or credential.get("client_name") or credential.get("client_id") or ("Unnamed credential" if tid else None)
+        labels = {"baseline_initialized": "Initial inventory observed", "token_baseline": "Existing credential first observed", "new_token": "New credential observed", "token_updated": "Credential metadata changed", "token_removed": "Credential removal observed", "new_ip": "New credential IP observed", "new_client": "New client observed", "websocket_action": "WebSocket service command", "rest_action": "REST service command", "service_call": "Service invoked", "login_success": "Successful login observed", "login_failure": "Failed login observed", "recognition_changed": "Recognition changed"}
+        detail["description"] = labels.get(detail["kind"], detail["kind"].replace("_", " "))
+        if detail["kind"] in ("service_call", "websocket_action", "rest_action"):
+            detail["description"] += f": {detail.get('domain', '')}.{detail.get('service', '')} (outcome not observed)"
+        if detail["kind"] == "rest_request":
+            detail["description"] = f"GET {detail.get('request_label', 'API endpoint')} (HTTP {detail.get('http_status', 'unknown')})"
+        detail["attribution_scope"] = "user_only_credential_unknown" if detail["kind"] == "service_call" else "direct_credential" if tid else "unknown_or_inventory"
+        return detail
 
     def serialize(self):
         self.prune()
@@ -267,7 +308,22 @@ class SecurityHistory:
         if call and (stamp := parse_time(call["timestamp"])) and stamp <= now:
             activity.append(stamp)
         last_observed = max(activity) if activity else None
+        llt_ids = {token["token_id"] for token in tokens
+                   if token.get("token_type") == "long_lived_access_token"}
+        # Retained metadata can identify a credential removed since its last action.
+        for record in self.records:
+            metadata = record.get("metadata") or {}
+            if record.get("user_id") == user_id and metadata.get("token_type") == "long_lived_access_token":
+                llt_ids.add(metadata.get("token_id"))
+        recent_llt = {record["token_id"] for record in self.records
+            if record.get("user_id") == user_id
+            and record.get("token_id") in llt_ids
+            and record.get("kind") in ("rest_request", "rest_action", "websocket_action")
+            and (stamp := parse_time(record.get("timestamp"))) is not None
+            and timedelta(0) <= now - stamp <= timedelta(minutes=recent_minutes)
+        }
         return {
+            "recent_llt_token_count": len(recent_llt),
             "last_token_use": latest[0] if latest else None,
             "last_service_call": parse_time(call["timestamp"]) if call else None,
             "recently_observed": bool(last_observed and now - last_observed <= timedelta(minutes=recent_minutes)),
@@ -287,9 +343,21 @@ class SecurityHistory:
         """Expose bounded credential activity, never claim live connections."""
         now = now or utcnow()
         rows = []
+        latest_actions = {}
+        for record in self.records:
+            if record.get("user_id") == user_id and record.get("kind") in ("rest_action", "websocket_action", "rest_request"):
+                tid = record.get("token_id")
+                stamp = parse_time(record.get("timestamp"))
+                if stamp and stamp <= now and (tid not in latest_actions or stamp > latest_actions[tid]):
+                    latest_actions[tid] = stamp
         for token in tokens:
             row = token_metadata(token)
             stamp = parse_time(row.get("last_used_at"))
+            action_stamp = latest_actions.get(row["token_id"])
+            row["last_observed_action_at"] = action_stamp.isoformat() if action_stamp else None
+            if action_stamp and (stamp is None or action_stamp > stamp):
+                stamp = action_stamp
+            row["last_observed_use_at"] = stamp.isoformat() if stamp else None
             expiry = row.get("expire_at")
             expired = isinstance(expiry, (int, float)) and expiry <= now.timestamp()
             row["recently_used"] = bool(
@@ -300,7 +368,7 @@ class SecurityHistory:
             rows.append(row)
         if not include_details:
             return {"recently_used_token_count": sum(row["recently_used"] for row in rows)}
-        rows.sort(key=lambda row: row.get("last_used_at") or "", reverse=True)
+        rows.sort(key=lambda row: row.get("last_observed_use_at") or "", reverse=True)
         evidence_by_token = {}
         new_tokens = set()
         new_ips = set()
@@ -315,16 +383,38 @@ class SecurityHistory:
             if record["kind"] == "new_ip":
                 new_ips.add((tid, record.get("value")))
         observations = []
+        current_tokens = {row["token_id"]: row for row in rows}
+        last_http_ip = {}
+        last_http_observation = {}
         for record in reversed(self.records):
             metadata = record.get("metadata")
-            if record.get("user_id") != user_id or not isinstance(metadata, dict):
+            if record.get("user_id") != user_id:
+                continue
+            if record.get("kind") in ("rest_action", "rest_request"):
+                tid = record.get("token_id")
+                ip = safe_ip(record.get("source_ip"))
+                if not tid or not ip:
+                    continue
+                if last_http_ip.get(tid) == ip:
+                    last_http_observation[tid]["ip_run_started_at"] = record["timestamp"]
+                    continue
+                last_http_ip[tid] = ip
+                metadata = {**current_tokens.get(tid, (self.previous or {}).get(tid, {})),
+                            "token_id": tid, "user_id": user_id,
+                            "last_used_ip": ip, "last_used_at": record["timestamp"]}
+            if not isinstance(metadata, dict):
                 continue
             if not metadata.get("last_used_ip"):
                 continue
             observation = token_metadata(metadata)
             observation["observed_at"] = record["timestamp"]
             observation["observation_kind"] = record["kind"]
+            observation["ip_source"] = "http_request" if record["kind"] in ("rest_action", "rest_request") else "ha_inventory"
+            if observation["ip_source"] == "http_request":
+                observation["ip_run_started_at"] = record["timestamp"]
+                last_http_observation[observation["token_id"]] = observation
             observations.append(observation)
+        observations.sort(key=lambda item: parse_time(item.get("last_used_at")) or parse_time(item["observed_at"]), reverse=True)
         from .network import ip_scope
         observations_by_token = {}
         for observation in observations:
@@ -342,11 +432,21 @@ class SecurityHistory:
             tid = row["token_id"]
             row["label"] = self.token_labels.get(tid) or row.get("client_name") or row.get("client_id") or "Unknown client"
             row["credential_status"] = "removed" if tid in removed else "expired" if row["expired"] else "present"
-            row["activity"] = "removed" if tid in removed else "expired" if row["expired"] else "recently_used" if row["recently_used"] else "outside_window" if row.get("last_used_at") else "never_observed"
-            row["ip_scope"] = ip_scope(row.get("last_used_ip"))
-            row["ip_context"] = self.ip_context.get(row.get("last_used_ip"), {})
+            row["activity"] = "removed" if tid in removed else "expired" if row["expired"] else "recently_used" if row["recently_used"] else "outside_window" if row.get("last_observed_use_at") or row.get("last_used_at") else "never_observed"
             relevant = observations_by_token.get(tid, [])
+            latest_ip = relevant[0] if relevant else None
+            row["observed_source_ip"] = latest_ip["last_used_ip"] if latest_ip else row.get("last_used_ip")
+            row["observed_ip_source"] = latest_ip.get("ip_source") if latest_ip else "ha_inventory"
+            row["observed_ip_at"] = (latest_ip.get("last_used_at") or latest_ip["observed_at"]) if latest_ip else row.get("last_used_at")
+            row["ip_scope"] = ip_scope(row["observed_source_ip"])
+            row["ip_context"] = self.ip_context.get(row["observed_source_ip"], {})
             row["ip_changed"] = len({item["last_used_ip"] for item in relevant}) > 1
+            row["recent_ip_change"] = any(
+                newer["last_used_ip"] != older["last_used_ip"]
+                and (stamp := parse_time(newer.get("ip_run_started_at")) or parse_time(newer.get("last_used_at")) or parse_time(newer["observed_at"])) is not None
+                and timedelta(0) <= now - stamp <= timedelta(minutes=recent_minutes)
+                for newer, older in zip(relevant, relevant[1:])
+            )
             row["new_credential"] = tid in new_tokens
             evidence = evidence_by_token.get(tid, [])
             row["first_observed_at"] = evidence[0]["timestamp"] if evidence else None

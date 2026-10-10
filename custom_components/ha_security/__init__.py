@@ -14,6 +14,7 @@ from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .const import CONF_ENRICH_IP
 from .const import CONF_TRACK_SESSIONS, CONF_TRACK_LOGINS
 from .monitor import AuthMonitor
+from .rest_monitor import install_rest_adapter, install_rest_reads
 from .audit import AuditStore, register_actions, remove_actions, refresh_action_descriptions
 from .const import (
     CONF_RETENTION_DAYS, CONF_RECENT_MINUTES, CONF_EXPOSE_NETWORK,
@@ -78,6 +79,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         from .sessions import install_adapter
         monitor.session_cleanup = install_adapter(hass, monitor.sessions)
         audit.changed()
+    monitor.rest_cleanup = install_rest_adapter(monitor)
+    monitor.rest_read_cleanup = install_rest_reads(hass, monitor)
     if settings.get(CONF_TRACK_LOGINS, False):
         from .login_monitor import install_login_adapter
         monitor.login_cleanup = install_login_adapter(hass, monitor)

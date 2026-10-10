@@ -12,6 +12,40 @@ from ha_security_unit.auth_monitor import async_snapshot
 
 
 class HistoryTests(unittest.IsolatedAsyncioTestCase):
+    def test_inventory_category_excludes_actions_logins_and_user_calls_before_pagination(self):
+        history = SecurityHistory()
+        for kind in ("token_baseline", "new_token", "token_updated", "token_removed", "new_ip", "new_client",
+                     "websocket_action", "service_call", "login_success", "recognition_changed"):
+            history.add(kind, "u", token_id="a")
+        page = history.query(token_id="a", category="inventory", limit=2)
+        self.assertEqual(page["total"], 6)
+        self.assertEqual(len(page["records"]), 2)
+        self.assertEqual(page["next_offset"], 2)
+        self.assertEqual({r["kind"] for r in history.query(category="inventory")["records"]},
+                         {"token_baseline", "new_token", "token_updated", "token_removed", "new_ip", "new_client"})
+        self.assertEqual(history.query(category="inventory", kind="websocket_action")["total"], 0)
+
+    def test_credential_attribution_and_readable_pagination(self):
+        history = SecurityHistory()
+        now = utcnow()
+        history.add("token_updated", "u", now, metadata={"token_id": "a"})
+        history.add("token_updated", "u", now, metadata={"token_id": "b"})
+        history.service_call({"domain": "light", "service": "turn_on"}, SimpleNamespace(user_id="u", id="ctx", parent_id=None), now)
+        history.token_labels["a"] = "Kitchen tablet"
+        direct = history.query(token_id="a")
+        self.assertEqual(direct["total"], 1)
+        self.assertEqual(direct["records"][0]["credential_label"], "Kitchen tablet")
+        self.assertEqual(history.query(text="Kitchen tablet")["total"], 1)
+        calls = history.query(user_id="u", kind="service_call")
+        self.assertEqual(calls["records"][0]["attribution_scope"], "user_only_credential_unknown")
+        self.assertNotIn("token_id", calls["records"][0])
+        self.assertIn("light.turn_on", calls["records"][0]["description"])
+        page = history.query(limit=1)
+        self.assertEqual(page["next_offset"], 1)
+        self.assertIsNone(history.query(offset=2, limit=1)["next_offset"])
+        self.assertIn("not every REST request", page["coverage"]["limitations"])
+        self.assertEqual(history.query(since=now.isoformat(), until=now.isoformat())["total"], 3)
+
     async def snapshot(self, record):
         return await async_snapshot(SimpleNamespace(
             async_get_users=self.fake_users(user({"record": record})),

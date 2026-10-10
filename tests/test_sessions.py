@@ -3,6 +3,7 @@
 from datetime import timedelta
 import json
 import inspect
+import uuid
 import sys
 from types import SimpleNamespace
 import unittest
@@ -26,6 +27,9 @@ class Connection:
         self.messages += 1
         return "handled"
 
+    def context(self, msg):
+        return SimpleNamespace(id=uuid.uuid4().hex, user_id=self.user.id)
+
     def async_handle_close(self):
         self.closed = True
 
@@ -37,6 +41,67 @@ class SessionTests(unittest.TestCase):
         self.history = SecurityHistory()
         self.changed = Mock()
         self.tracker = SessionTracker(self.history, self.changed)
+
+    def test_two_credentials_same_user_exact_context_attribution(self):
+        uninstall = install_adapter(self.hass, self.tracker, Connection)
+        try:
+            a = Connection(self.hass, self.user, refresh_token_id="token-a")
+            b = Connection(self.hass, self.user, refresh_token_id="token-b")
+            ca = a.context({"type": "call_service", "domain": "light", "service": "turn_on", "service_data": {"password": "SECRET"}})
+            cb = b.context({"type": "call_service", "domain": "lock", "service": "unlock"})
+            # Events can arrive in the reverse order, with the same user and IP.
+            self.assertTrue(self.tracker.link_service_event({"domain": "lock", "service": "unlock"}, cb))
+            self.assertTrue(self.tracker.link_service_event({"domain": "light", "service": "turn_on", "service_data": {"entity_id": "light.kitchen", "password": "SECRET"}}, ca))
+            first = self.history.query(token_id="token-a", kind="websocket_action")["records"]
+            second = self.history.query(token_id="token-b", kind="websocket_action")["records"]
+            self.assertEqual(len(first), 1)
+            self.assertEqual(first[0]["domain"], "light")
+            self.assertEqual(first[0]["entity_ids"], ["light.kitchen"])
+            self.assertEqual(first[0]["attribution_scope"], "direct_credential")
+            self.assertNotEqual(first[0]["session_id"], second[0]["session_id"])
+            self.assertEqual(second[0]["domain"], "lock")
+            self.assertNotIn("SECRET", json.dumps(self.history.serialize()))
+            unknown = SimpleNamespace(id="unknown", user_id="u", parent_id=ca.id)
+            self.assertFalse(self.tracker.link_service_event({"domain": "light", "service": "turn_on"}, unknown))
+            self.assertFalse(self.tracker.link_service_event({"domain": "lock", "service": "unlock"}, ca))
+            self.assertFalse(self.tracker.link_service_event({"domain": "light", "service": "turn_on"}, SimpleNamespace(id=ca.id, user_id="other")))
+        finally:
+            uninstall()
+        self.assertFalse(self.tracker.action_contexts)
+
+    def test_action_scope_no_token_no_payload_no_internal_query_and_failure_isolation(self):
+        original = Connection.context
+        uninstall = install_adapter(self.hass, self.tracker, Connection)
+        try:
+            a = Connection(self.hass, self.user)
+            a.context({"type": "render_template", "template": "SECRET"})
+            a.context({"type": "call_service", "domain": "ha_security", "service": "query_audit"})
+            Connection(self.hass, self.user, refresh_token_id=None).context({"type": "call_service", "domain": "light", "service": "turn_on"})
+            self.assertEqual(self.history.query(kind="websocket_action")["total"], 0)
+            self.tracker.observe_action = Mock(side_effect=RuntimeError("SECRET"))
+            with self.assertLogs("ha_security_unit.sessions", level="WARNING") as captured:
+                context = a.context({"type": "call_service", "domain": "light", "service": "turn_on"})
+            self.assertEqual(context.user_id, "u")
+            self.assertNotIn("SECRET", str(captured.output))
+            self.assertEqual(self.tracker.action_status, "error")
+            self.assertEqual(self.tracker.status, "observing")
+        finally:
+            uninstall()
+        self.assertIs(Connection.context, original)
+
+    def test_context_cache_is_bounded_and_expired_links_are_not_used(self):
+        self.tracker.start()
+        self.tracker.action_status = "observing"
+        a = Connection(self.hass, self.user)
+        msg = {"type": "call_service", "domain": "light", "service": "turn_on"}
+        for i in range(1002):
+            self.tracker.observe_action(a, msg, SimpleNamespace(id=str(i), user_id="u"))
+        self.assertEqual(len(self.tracker.action_contexts), 1000)
+        self.assertNotIn("0", self.tracker.action_contexts)
+        cid = "1001"
+        _, row = self.tracker.action_contexts[cid]
+        self.tracker.action_contexts[cid] = (-1000, row)
+        self.assertFalse(self.tracker.link_service_event({"domain": "light", "service": "turn_on"}, SimpleNamespace(id=cid, user_id="u")))
 
     def test_concurrent_connections_same_token_different_ips_and_close(self):
         uninstall = install_adapter(self.hass, self.tracker, Connection)

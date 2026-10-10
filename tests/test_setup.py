@@ -266,12 +266,63 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         )
         await listener(event)
         monitor = self.hass.data["ha_security"]
-        self.assertEqual(monitor.history.query(kind="service_call")["total"], 1)
+        self.assertEqual(monitor.history.query(kind="service_call")["total"], 0)
+        self.assertEqual(monitor.history.last_calls["u"]["domain"], "light")
         await monitor.async_close()
         monitor.audit.store.async_save.assert_awaited_once()
         await listener(event)
-        self.assertEqual(monitor.history.query(kind="service_call")["total"], 1)
+        self.assertEqual(monitor.history.query(kind="service_call")["total"], 0)
+        self.assertEqual(monitor.history.last_calls["u"]["domain"], "light")
         self.assertFalse(await monitor.async_refresh())
+
+    async def test_related_activity_contract_from_real_snapshot_and_connection(self):
+        """Generate real action responses for the DOM contract test, no hand-built results."""
+        import json
+        from test_auth_monitor import user, token
+        from test_sessions import Connection
+        account = user()
+        a, b = token(), token()
+        a.id, b.id = "credential-a", "credential-b"
+        account.refresh_tokens = {a.id: a, b.id: b}
+        self.hass.auth.async_get_users.return_value = [account]
+        await self.module.async_setup_entry(self.hass, self.entry)
+        monitor = self.hass.data["ha_security"]
+        from ha_security_unit import sessions as sessions_module
+        uninstall = sessions_module.install_adapter(self.hass, monitor.sessions, Connection)
+        registered = {item.args[2]: item for item in self.module.audit_module.async_register_admin_service.call_args_list}
+        async def invoke(service, data):
+            registration = registered[service]
+            return await registration.args[3](SimpleNamespace(data=registration.kwargs["schema"](data)))
+        try:
+            connection = Connection(self.hass, account, refresh_token_id=a.id)
+            other = Connection(self.hass, account, refresh_token_id=b.id)
+            context = connection.context({"type": "call_service", "domain": "light", "service": "turn_on"})
+            other.context({"type": "call_service", "domain": "lock", "service": "unlock"})
+            await monitor.async_service_event(SimpleNamespace(data={"domain": "light", "service": "turn_on", "service_data": {"entity_id": "light.kitchen"}}, context=context))
+            scope = {"user_id": account.id, "token_id": a.id}
+            inventory = await invoke("query_audit", {**scope, "category": "inventory"})
+            connections = await invoke("query_sessions", scope)
+            actions = await invoke("query_audit", {**scope, "category": "actions"})
+            self.assertGreater(inventory["total"], 0)
+            self.assertTrue(all(r["kind"] != "websocket_action" for r in inventory["records"]))
+            self.assertFalse({r["id"] for r in inventory["records"]} & {r["id"] for r in actions["records"]})
+            self.assertEqual(connections["total"], 1)
+            self.assertEqual(actions["total"], 1)
+            self.assertTrue(actions["records"][0]["invocation_observed"])
+            self.assertEqual(actions["records"][0]["entity_ids"], ["light.kitchen"])
+            self.assertEqual(actions["credential_scope"]["retained_connections"], 1)
+            self.assertTrue(actions["credential_scope"]["known"])
+            unknown = await invoke("query_audit", {"user_id": account.id, "token_id": "does-not-exist"})
+            self.assertFalse(unknown["credential_scope"]["known"])
+            self.assertEqual(unknown["total"], 0)
+            fixture = {"user_id": account.id, "token_id": a.id, "view": monitor.sessions.view(account.id, True),
+                       "inventory": inventory, "connections": connections, "actions": actions}
+            path = Path(__file__).resolve().parents[1] / ".test-deps/activity-contract.json"
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(json.dumps(fixture), encoding="utf-8")
+        finally:
+            uninstall()
+            await monitor.async_close()
 
     async def test_platform_setup_failure_cleans_runtime(self):
         self.hass.config_entries.async_forward_entry_setups.side_effect = RuntimeError("platform")

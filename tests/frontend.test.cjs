@@ -21,7 +21,7 @@ vm.runInNewContext(fs.readFileSync('custom_components/ha_security/www/ha-securit
 const entity=(metric,attributes,state='0')=>({entity_id:'sensor.'+metric,attributes:{ha_security_metric:metric,...attributes},state,last_updated:'2026-10-07'});
 const login={id:'success',kind:'login_success',user_id:'u',token_id:'record',source_ip:'8.8.8.8',timestamp:'2026-10-07T12:00:00Z',security_level:'likely_issue',security_reasons:['<img src=x onerror=alert(1)>'],correlated_failure_count:12};
 const failure={id:'failure',kind:'login_failure',user_id:null,source_ip:'1.1.1.1',timestamp:'2026-10-07T11:59:00Z',attribution:'unknown_user'};
-const states=[entity('overview',{tracking_status:'observing',login_tracking_status:'observing'}),entity('refresh_tokens',{user_id:'u',user_name:'Matt'}),entity('global_successful_logins_24h',{successful_logins_24h:1,failed_login_attempts_24h:12,security_status:'likely_issue',login_events:[login,failure]}),entity('security_status',{user_id:'u',login_events:[login]},'likely_issue')];
+const states=[entity('overview',{tracking_status:'observing',login_tracking_status:'observing'}),entity('refresh_tokens',{user_id:'u',user_name:'Matt',recent_llt_token_count:2,recent_window_minutes:15}),entity('global_successful_logins_24h',{successful_logins_24h:1,failed_login_attempts_24h:12,security_status:'likely_issue',login_events:[login,failure]}),entity('security_status',{user_id:'u',login_events:[login]},'likely_issue')];
 const card=new Card(); card.setConfig({title:'Security centre'}); card.hass={states:Object.fromEntries(states.map(e=>[e.entity_id,e]))};
 card.tab='logins';card.render();
 assert.ok(root.innerHTML.includes('Likely an issue'));
@@ -54,3 +54,95 @@ searchNode.oncompositionend({target:searchNode});
 assert.equal(card.query,'composing');assert.equal(root.activeElement,searchNode);
 root.activeElement=null;card.render();assert.equal(root.activeElement,null); // no focus stealing
 console.log('Search focus, selection, live refresh and composition checks passed');
+const credential={token_id:'a',user_id:'u',label:'Tablet',token_type:'long_lived_access_token',expire_at:1800000000,access_token_expiration_seconds:3600};
+card.tab='credentials';
+const rendered=card.row(credential,[],new Set());
+assert.ok(rendered.includes('Long-lived access-token record'));
+assert.ok(rendered.includes('Credential expires'));
+assert.ok(rendered.includes('HA inventory last use'));
+assert.ok(rendered.includes('Last observed request / command'));
+assert.ok(rendered.includes('not every API endpoint'));
+assert.ok(rendered.includes('View related activity'));
+assert.ok(!rendered.includes('Entity details &amp; history'));
+root.activeElement=null;
+// Explicit renders and tab round trips restore expansion per tab.
+card.tab='live';card.render();
+root.querySelectorAll=selector=>selector==='details[open]' ? [{dataset:{id:'session-open'}}] : [];
+card.render();assert.ok(card.openRows.get('live').has('session-open'));
+card.tab='credentials';card.render();
+root.querySelectorAll=selector=>selector==='details[open]' ? [{dataset:{id:'credential-open'}}] : [];
+card.tab='live';card.render();
+assert.ok(card.openRows.get('credentials').has('credential-open'));
+assert.ok(card.openRows.get('live').has('session-open'));
+root.querySelectorAll=()=>[];
+console.log('Per-tab expansion checks passed (DOM identity covered in frontend-dom.test.cjs)');
+card.tab='activity';card.related={token_id:'a',user_id:'u'};
+let request;
+card._hass.callWS=async value=>{request=value;return {response:{total:1,records:[{id:'x',kind:'service_call',description:'Service invoked: light.turn_on',attribution_scope:'user_only_credential_unknown',user_id:'u'}],summary:'Showing 1 of 1',coverage:{limitations:'Not every REST request'},next_offset:null}};};
+(async()=>{
+  card._hass.callWS=async value=>{request=value;return [{when:1791498600,entity_id:'light.kitchen',state:'on',context_user_id:'u'},{when:1791498601,entity_id:'lock.front',state:'unlocked',context_user_id:'other'}];};
+  card.activityMode='user';await card.loadActivity(0);
+  assert.equal(request.type,'logbook/get_events');assert.equal(request.user_id,undefined);
+  assert.ok(root.innerHTML.includes('light.kitchen'));assert.ok(!root.innerHTML.includes('lock.front'));
+  assert.ok(root.innerHTML.includes('User activity'));assert.ok(root.innerHTML.includes('Technical details (structured result)'));
+  assert.ok(root.innerHTML.includes('specific credential unknown'));
+  card._hass.callWS=async value=>{request=value;return {response:{records:[],total:0}};};
+  card.activityMode='actions';await card.loadActivity(0);assert.equal(request.service_data.category,'actions');assert.equal(request.service_data.token_id,'a');
+  const attributed=card.activityRow({id:'command',kind:'websocket_action',user_name:'Matt',token_id:'a',session_id:'session-a',domain:'light',service:'turn_on',context_id:'ctx',invocation_observed:true},new Set());
+  assert.ok(attributed.includes('Matt submitted light.turn_on'));
+  assert.ok(attributed.includes('Directly linked'));
+  assert.ok(attributed.includes('Related HA activity'));
+  assert.ok(!attributed.includes('specific credential and connection are unknown'));
+  card._hass.callWS=async value=>{request=value;return [{when:1791498600,entity_id:'light.kitchen',state:'on',context_user_id:'u'}];};
+  card.activityMode='context';card.nativeContext={id:'exact-context',timestamp:'2026-10-01T12:00:00Z'};
+  await card.loadActivity(0);
+  assert.equal(request.type,'logbook/get_events');assert.equal(request.context_id,'exact-context');
+  assert.ok(Date.parse(request.end_time)-Date.parse(request.start_time)<=86400000);
+  assert.ok(root.innerHTML.includes('contextual evidence'));
+  card.activityMode='user';await card.loadActivity(0);
+  assert.equal(request.context_id,undefined);
+  assert.ok(Date.parse(request.start_time)>Date.parse(card.nativeContext.timestamp));
+  card._hass.callWS=async value=>{request=value;return {response:{records:[],total:0}};};
+  card.activityMode='direct';await card.loadActivity(50);assert.equal(request.service_data.token_id,'a');assert.equal(request.service_data.offset,50);
+  card.activityMode='connections';await card.loadActivity(0);assert.equal(request.service,'query_sessions');assert.equal(request.service_data.kind,undefined);
+  // Old backend records must still describe service calls accurately.
+  const rawCall={id:'legacy',kind:'service_call',user_id:'u',user_name:'Matt',domain:'ha_security',service:'query_audit',entity_ids:[],timestamp:'2026-10-08T22:29:03Z'};
+  const openRows=new Set(['activity-legacy','activity-legacy-raw']);
+  const legacy=card.activityRow(rawCall,openRows);
+  assert.ok(legacy.includes('Audit history searched'));
+  assert.ok(legacy.includes('specific credential and connection are unknown'));
+  assert.ok(legacy.includes('No entity targets recorded'));
+  assert.ok(!legacy.includes('Connection undefined'));
+  assert.ok(!legacy.includes('Credential-linked WebSocket connection'));
+  assert.ok(legacy.includes('data-id="activity-legacy" open'));
+  assert.ok(legacy.includes('data-id="activity-legacy-raw" open'));
+  assert.ok(card.activityRow({...rawCall,domain:'light',service:'turn_on',entity_ids:['light.kitchen']},new Set()).includes('light.kitchen'));
+  assert.ok(card.activityRow({session_id:'ws',state:'closed',token_id:'a'},new Set()).includes('WebSocket connection closed'));
+  // Unrelated HA state updates leave the inspected activity DOM intact.
+  const before=root.innerHTML;
+  card.hass={states:Object.fromEntries(states.map(e=>[e.entity_id,{...e,last_updated:'another-update'}]))};
+  assert.equal(root.innerHTML,before);
+  card.activityResult={total:1,records:[rawCall]};
+  root.querySelectorAll=selector=>selector==='details[open]' ? [...openRows].map(id=>({dataset:{id}})) : [];
+  card.render();
+  assert.ok(root.innerHTML.includes('data-id="activity-legacy" open'));
+  assert.ok(root.innerHTML.includes('data-id="activity-legacy-raw" open'));
+  assert.ok(root.innerHTML.includes('<div class="list"><details data-id="activity-legacy" open'));
+  root.querySelectorAll=()=>[];
+  card._hass.callWS=async()=>{throw new Error('unauthorized');};await card.loadActivity(0);assert.ok(root.innerHTML.includes('Administrator access required'));
+  console.log('Related activity attribution, pagination, response and permission checks passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+
+const restHtml=card.activityRow({id:"rest",kind:"rest_action",user_name:"Matt",token_id:"llt",credential_label:"n8n LLT",domain:"light",service:"turn_off",transport:"rest",entity_ids:["light.hallway_light"],invocation_observed:true},new Set());
+assert.ok(restHtml.includes("Matt submitted light.turn_off"));assert.ok(restHtml.includes("n8n LLT"));assert.ok(restHtml.includes("REST (HTTP)"));assert.ok(restHtml.includes("light.hallway_light"));assert.ok(!restHtml.includes("Connection ID"));
+
+const readHtml=card.activityRow({id:"read",kind:"rest_request",user_name:"Matt",token_id:"llt",credential_label:"n8n LLT",method:"GET",endpoint:"/api/states",request_label:"Entity states",http_status:200},new Set());
+assert.ok(readHtml.includes("Matt read Entity states (HTTP 200)"));assert.ok(readHtml.includes("n8n LLT"));assert.ok(!readHtml.includes("unknown.undefined"));
+const sortCard = new Card(); sortCard.setConfig({}); sortCard.tab="credentials";sortCard.user="all";sortCard.query="";sortCard.filter="all";
+sortCard.hass={states:Object.fromEntries([...states,entity("recently_used_tokens",{user_id:"u",connections:[{token_id:"old",label:"Older",last_observed_use_at:"2026-10-01T00:00:00Z",created_at:"2026-10-10T00:00:00Z"},{token_id:"new",label:"Newer activity",last_observed_use_at:"2026-10-10T00:00:00Z",created_at:"2026-10-01T00:00:00Z"}]})].map(e=>[e.entity_id,e]))};sortCard.render();
+assert.equal(sortCard.displayedRows[0].token_id,"new");
+
+assert.ok(html.includes("recent LLT tokens"));assert.ok(html.includes("last 15 min"));
+
+const ipHtml=sortCard.row({token_id:"llt",user_id:"u",label:"N8N",observed_source_ip:"192.0.2.2",observed_ip_source:"http_request",recent_ip_change:true,ip_changed:true},[],new Set());
+assert.ok(ipHtml.includes("192.0.2.2"));assert.ok(ipHtml.includes("HTTP request (HA resolved)"));assert.ok(ipHtml.includes("Recent IP change"));assert.ok(ipHtml.includes("HA inventory IP"));
