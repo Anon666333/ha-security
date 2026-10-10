@@ -26,7 +26,7 @@ class AuditStore:
     def changed(self):
         if not self._save_pending:
             self._save_pending = True
-            self.store.async_delay_save(self._save_data, 5)
+            self.store.async_delay_save(self._save_data, 20)
 
     def _save_data(self):
         self._save_pending = False
@@ -43,6 +43,14 @@ def register_actions(hass, monitor):
     def scope_info(data):
         tid, uid = data.get("token_id"), data.get("user_id")
         result = {"activity_api_version": 2, "integration_version": integration_version}
+        result["credential_options"] = [
+            {"token_id": r["token_id"], "user_id": r["user_id"],
+             "user_name": monitor.history.user_names.get(r["user_id"], r["user_id"]),
+             "label": monitor.history.token_labels.get(r["token_id"]) or r.get("client_name") or r.get("client_id") or "Unnamed credential",
+             "token_type": r.get("token_type")}
+            for r in (monitor.snapshot or {}).get("tokens", [])
+            if not uid or r["user_id"] == uid
+        ]
         if tid:
             records = [r for r in monitor.history.records
                        if (r.get("token_id") or (r.get("metadata") or {}).get("token_id")) == tid
@@ -54,7 +62,7 @@ def register_actions(hass, monitor):
             result["credential_scope"] = {
                 "token_id": tid, "user_id": uid, "in_current_inventory": current,
                 "retained_observations": len(records), "retained_connections": len(sessions),
-                "retained_actions": sum(r.get("kind") == "websocket_action" for r in records),
+                "retained_actions": sum(r.get("kind") in ("websocket_action", "rest_action", "rest_request") and not (r.get("domain") == "system_log" and r.get("service") == "write") for r in records),
                 "known": current or bool(records or sessions),
             }
         return result
@@ -63,7 +71,10 @@ def register_actions(hass, monitor):
         result = monitor.history.query(**dict(call.data))
         result.update(scope_info(call.data))
         result.update(websocket_action_status=monitor.sessions.action_status, websocket_action_reason=monitor.sessions.action_reason)
-        monitor.audit.changed()
+        result.update(rest_action_status=monitor.rest_status, rest_action_reason=monitor.rest_reason, rest_read_status=monitor.rest_read_status)
+        if not monitor.expose_network:
+            for row in result["records"]:
+                row.pop("source_ip", None)
         return result
 
     async def inventory(call):
@@ -131,6 +142,8 @@ def register_actions(hass, monitor):
         for row in reversed(monitor.history.sessions):
             if call.data.get("user_id") and row["user_id"] != call.data["user_id"]:
                 continue
+            if row.get("token_id") in call.data.get("exclude_token_ids", []):
+                continue
             if call.data.get("state") and row["state"] != call.data["state"]:
                 continue
             if call.data.get("token_id") and row.get("token_id") != call.data["token_id"]:
@@ -150,7 +163,6 @@ def register_actions(hass, monitor):
                 continue
             values.append(detail)
         offset = call.data.get("offset", 0)
-        monitor.audit.changed()
         return {"total": len(values), "sessions": values[offset:offset + call.data.get("limit", 100)],
                 "tracking_status": monitor.sessions.status, **scope_info(call.data), **monitor.history.query_info(len(values), offset, call.data.get("limit", 100))}
 
@@ -166,7 +178,9 @@ def register_actions(hass, monitor):
         vol.Optional("until"): timestamp,
         vol.Optional("user_id"): str,
         vol.Optional("kind"): str,
-        vol.Optional("category"): vol.In(("inventory",)),
+        vol.Optional("exclude_token_ids"): vol.All([str], vol.Length(max=5000)),
+        vol.Optional("exclude_actions"): vol.All([vol.All(str, vol.Length(max=128))], vol.Length(max=50)),
+        vol.Optional("category"): vol.In(("inventory", "actions")),
         vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
         vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
     })
@@ -180,6 +194,7 @@ def register_actions(hass, monitor):
             vol.Optional("since"): timestamp,
             vol.Optional("until"): timestamp,
             vol.Optional("user_id"): str,
+            vol.Optional("exclude_token_ids"): vol.All([str], vol.Length(max=5000)),
             vol.Optional("state"): vol.In(("connected", "closed", "interrupted")),
             vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
             vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
@@ -218,6 +233,10 @@ def user_options(monitor, include_history=True):
 
 async def refresh_action_descriptions(hass, monitor):
     """Use HA's service-description API; never edit services.yaml at runtime."""
+    signature = (tuple((r["user_id"], r.get("name")) for r in (monitor.snapshot or {}).get("users", [])),
+                 tuple(sorted(monitor.history.user_names.items())))
+    if getattr(monitor, "_description_signature", None) == signature:
+        return
     descriptions = await async_get_all_descriptions(hass)
     for service in ("query_audit", "query_sessions", "recognize_source"):
         description = deepcopy(descriptions.get(DOMAIN, {}).get(service, {}))
@@ -233,3 +252,5 @@ async def refresh_action_descriptions(hass, monitor):
         fields["user_id"].update(name="User", selector=selector)
         async_set_service_schema(hass, DOMAIN, service, description)
         hass.bus.async_fire("service_registered", {"domain": DOMAIN, "service": service})
+
+    monitor._description_signature = signature

@@ -71,7 +71,8 @@ class SessionTracker:
         row = self.live[key]
         if not newly_connected:
             row["last_seen_at"] = now
-        self.history.prune()
+        if monotonic() - self.history._last_prune >= 60:
+            self.history.prune()
         self.changed()
 
     def close(self, connection):

@@ -48,6 +48,7 @@ query_audit:
           - new_ip
           - new_client
           - websocket_action
+          - rest_action
           - service_call
           - login_success
           - login_failure

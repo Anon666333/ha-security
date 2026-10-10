@@ -302,7 +302,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
             scope = {"user_id": account.id, "token_id": a.id}
             inventory = await invoke("query_audit", {**scope, "category": "inventory"})
             connections = await invoke("query_sessions", scope)
-            actions = await invoke("query_audit", {**scope, "kind": "websocket_action"})
+            actions = await invoke("query_audit", {**scope, "category": "actions"})
             self.assertGreater(inventory["total"], 0)
             self.assertTrue(all(r["kind"] != "websocket_action" for r in inventory["records"]))
             self.assertFalse({r["id"] for r in inventory["records"]} & {r["id"] for r in actions["records"]})

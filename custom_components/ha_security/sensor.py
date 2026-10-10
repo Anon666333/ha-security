@@ -202,6 +202,7 @@ class UserTokenSensor(SensorEntity):
             summary = self.monitor.user_summary(self.user_id)
             attributes.update({
                 "recently_observed": summary["recently_observed"],
+                "recent_llt_token_count": summary["recent_llt_token_count"],
                 "last_token_use": summary["last_token_use"].isoformat() if summary["last_token_use"] else None,
                 "last_service_call": summary["last_service_call"].isoformat() if summary["last_service_call"] else None,
                 "new_observation_count": summary["new_observation_count"],

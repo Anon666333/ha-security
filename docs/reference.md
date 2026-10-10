@@ -566,7 +566,7 @@ provides the authenticated credential record ID, session and original HA context
 The original context and HA processing are preserved. Observer failures stop action
 observation and expose a diagnostic without changing the original context response.
 This is not complete WebSocket auditing: other command types, binary traffic and
-HTTP/REST are excluded. HA Security's own service calls are omitted to avoid logging
+general HTTP/REST requests are excluded from the WebSocket observer. Core REST service POSTs have a separate observer described below. HA Security's own service calls are omitted to avoid logging
 the investigation itself. No service payloads, templates, credentials, request bodies
 or response bodies are stored. Allowed service-event entity targets are retained;
 device/area targets are not expanded.
@@ -645,3 +645,119 @@ credential commands but is broader supporting context, not another command list.
 Switching sections clears the previous section's results until the new query returns.
 Install the matching integration and card together; the new inventory filter requires
 the v0.1.15 backend. No older user history is reattributed to a credential.
+
+
+## Credential-attributed REST service calls (0.1.16)
+
+Core `POST /api/services/{domain}/{service}` requests are observed automatically while
+HA Security is loaded, independently of the WebSocket session option. This includes
+LLTs used by n8n. The adapter reads only HA-authenticated request metadata and links
+the service context ID, user ID, domain and service to the invocation event. It does
+not infer attribution from a user, IP or timestamp. The Activity action view queries
+`category: actions` to combine `rest_action` and `websocket_action` records.
+
+Records show the user, credential name (dashboard nickname overrides HA client name),
+REST transport, service and explicit entity targets when the invocation is observed.
+No artificial connection session is created. Headers, bearer tokens, request bodies
+and response bodies are never retained. HTTP response status and physical execution
+outcomes are not observed. Commands that fail before invocation can show a recorded
+context with invocation unconfirmed. General API reads and other REST endpoints are
+not covered, and historical requests cannot be reconstructed.
+
+This uses an experimental internal Core service-view context adapter (checked against
+Core 2026.9.4 source). Activity reports REST observation status and an explicit reason
+if unavailable. Unload restores the adapter; observer failures leave request processing
+unchanged. Live verification: install the matching backend and card, restart HA, refresh
+the browser resource `?v=0.1.16`, repeat an n8n light service call, and open the named LLT's
+related Credential actions. Verify the target and REST transport, then repeat using a
+different credential belonging to the same account to check separation. Local unit/DOM
+tests do not replace this installed-HA verification.
+
+
+## REST reads and action exclusions (0.1.18)
+
+Supported authenticated GET routes: `/api/`, `/api/states`, `/api/states/{entity_id}`,
+`/api/config`, `/api/services`, `/api/events`, `/api/components`. The API dependency
+ensures routes exist before observation starts. The guarded adapter replaces the
+existing aiohttp route handler slot and restores its own wrappers on unload. It
+records HA user/credential IDs, method, allowlisted endpoint template, HTTP status,
+and a validated entity ID. No headers, query strings, raw URLs or response bodies
+are retained. HTTP errors retain their original behavior. Other GET endpoints,
+including history/logbook and third-party endpoints, are outside this coverage.
+Activity displays REST GET observation status separately from service observation.
+
+`system_log.write` commands appear under Inventory & diagnostics; this shows an
+observed log-write invocation, not log message contents or every log-file write.
+Credential actions contains other service commands and supported REST reads. It
+does not claim a service submission proves physical execution. HA state changes
+remain available in related native history with its own attribution boundaries.
+
+Hide actions accepts comma-separated wildcard patterns such as `todo.get_items`,
+`todo.*`, or `GET /api/states*`. Patterns apply on the backend before pagination;
+records are retained. Choices persist in browser local storage (shared by security
+cards in that browser/origin), not HA settings. The service parameter is
+`exclude_actions: ["todo.*"]`, limited to 50 patterns of up to 128 characters.
+Credentials sort by latest observed use, with never-observed credentials last;
+open rows keep their position during background updates to preserve inspection.
+
+
+## Credential exclusions and HTTP source IP (0.1.19)
+
+Activity includes a Credentials dropdown with checked-by-default credential choices.
+It lists current inventory (regular refresh records and LLTs), uses dashboard nickname
+before HA client name, and scopes choices to the selected user. All users shows the
+whole current inventory with user names. Uncheck HASS.Agent to hide its activity;
+Show all credentials resets exclusions. Choices persist per browser/origin and apply
+to retained actions, inventory/diagnostics and connections before pagination. They do
+not stop collection. HA user/context history has no reliable credential ID and cannot
+apply those exclusions. Admin query services accept `exclude_token_ids`.
+
+New REST GET and service command records include `source_ip` from HA's resolved
+`request.remote` when Expose IP/client details is enabled. HA handles trusted proxy
+validation; we never parse forwarding headers independently. The UI labels it HTTP
+source IP (HA resolved). It may be a NAT, caller host or proxy address and is not a
+physical device identity. Existing records cannot have missing IPs reconstructed.
+
+
+## Recent LLT activity on user cards (0.1.21)
+
+User cards show WebSocket connections and a separate recent LLT activity count.
+The latter counts directly attributed REST reads, REST service commands and
+WebSocket service commands using long-lived credentials in the configured recent
+window (default 15 minutes). Inventory changes, generic user events, future and
+older timestamps are excluded. This is an observed action/request count, not a
+connection count or number of distinct credentials, and is independent of view
+exclusions. Unsupported endpoints are outside coverage; retention limits apply.
+The credential menu and card permit visible overflow so the popup is not clipped.
+
+
+## Activity performance and distinct LLTs (0.1.22)
+
+User cards now show DISTINCT long-lived token records with recent observed use,
+not the number of calls. Repeated requests using one LLT count once. The count
+uses the configured recent window, includes supported reads and service commands,
+and is independent of view exclusions. Prior releases' call count is superseded.
+
+Live entity notifications are batched to 10 seconds, local history saves to 20
+seconds (normal unload flushes immediately), and user summaries reused within
+10-second buckets until new evidence arrives. History additions enforce the audit
+cap immediately but perform full retention scans at most once per minute; queries,
+explicit-time operations and serialization prune immediately. Dashboard reads do
+not schedule storage writes; service description choices refresh only when users
+change. These reduce request-driven event-loop and disk work without dropping
+requests. Up to 20 seconds of unsaved recent data may be lost on an abrupt crash.
+The credential menu is wider, right-aligned and clamped to viewport bounds.
+
+
+## HTTP source addresses in Credentials (0.1.23)
+
+Credentials projects same-user, same-token REST source-IP records into its latest
+observed address and IP timeline. IP evidence is labelled HTTP request (HA resolved)
+or HA inventory, with recorded use time. Original inventory last_used_ip/last_used_at
+remain separate. Consecutive HTTP requests from the same address collapse into one
+IP-history run rather than flooding the credential timeline. A transition in the
+configured recent window highlights Recent IP change; repeated calls from an
+unchanged IP do not move an old transition into the recent window. This is an
+observation marker, not an assertion of compromise or physical device identity.
+Addresses must already have been captured with Expose IP/client details enabled.
+Optional enrichment includes recent HTTP addresses at the next inventory scan.

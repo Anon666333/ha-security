@@ -21,7 +21,7 @@ vm.runInNewContext(fs.readFileSync('custom_components/ha_security/www/ha-securit
 const entity=(metric,attributes,state='0')=>({entity_id:'sensor.'+metric,attributes:{ha_security_metric:metric,...attributes},state,last_updated:'2026-10-07'});
 const login={id:'success',kind:'login_success',user_id:'u',token_id:'record',source_ip:'8.8.8.8',timestamp:'2026-10-07T12:00:00Z',security_level:'likely_issue',security_reasons:['<img src=x onerror=alert(1)>'],correlated_failure_count:12};
 const failure={id:'failure',kind:'login_failure',user_id:null,source_ip:'1.1.1.1',timestamp:'2026-10-07T11:59:00Z',attribution:'unknown_user'};
-const states=[entity('overview',{tracking_status:'observing',login_tracking_status:'observing'}),entity('refresh_tokens',{user_id:'u',user_name:'Matt'}),entity('global_successful_logins_24h',{successful_logins_24h:1,failed_login_attempts_24h:12,security_status:'likely_issue',login_events:[login,failure]}),entity('security_status',{user_id:'u',login_events:[login]},'likely_issue')];
+const states=[entity('overview',{tracking_status:'observing',login_tracking_status:'observing'}),entity('refresh_tokens',{user_id:'u',user_name:'Matt',recent_llt_token_count:2,recent_window_minutes:15}),entity('global_successful_logins_24h',{successful_logins_24h:1,failed_login_attempts_24h:12,security_status:'likely_issue',login_events:[login,failure]}),entity('security_status',{user_id:'u',login_events:[login]},'likely_issue')];
 const card=new Card(); card.setConfig({title:'Security centre'}); card.hass={states:Object.fromEntries(states.map(e=>[e.entity_id,e]))};
 card.tab='logins';card.render();
 assert.ok(root.innerHTML.includes('Likely an issue'));
@@ -59,8 +59,9 @@ card.tab='credentials';
 const rendered=card.row(credential,[],new Set());
 assert.ok(rendered.includes('Long-lived access-token record'));
 assert.ok(rendered.includes('Credential expires'));
-assert.ok(rendered.includes('Last recorded token use'));
-assert.ok(rendered.includes('does not observe every REST request'));
+assert.ok(rendered.includes('HA inventory last use'));
+assert.ok(rendered.includes('Last observed request / command'));
+assert.ok(rendered.includes('not every API endpoint'));
 assert.ok(rendered.includes('View related activity'));
 assert.ok(!rendered.includes('Entity details &amp; history'));
 root.activeElement=null;
@@ -86,7 +87,7 @@ card._hass.callWS=async value=>{request=value;return {response:{total:1,records:
   assert.ok(root.innerHTML.includes('User activity'));assert.ok(root.innerHTML.includes('Technical details (structured result)'));
   assert.ok(root.innerHTML.includes('specific credential unknown'));
   card._hass.callWS=async value=>{request=value;return {response:{records:[],total:0}};};
-  card.activityMode='actions';await card.loadActivity(0);assert.equal(request.service_data.kind,'websocket_action');assert.equal(request.service_data.token_id,'a');
+  card.activityMode='actions';await card.loadActivity(0);assert.equal(request.service_data.category,'actions');assert.equal(request.service_data.token_id,'a');
   const attributed=card.activityRow({id:'command',kind:'websocket_action',user_name:'Matt',token_id:'a',session_id:'session-a',domain:'light',service:'turn_on',context_id:'ctx',invocation_observed:true},new Set());
   assert.ok(attributed.includes('Matt submitted light.turn_on'));
   assert.ok(attributed.includes('Directly linked'));
@@ -131,3 +132,17 @@ card._hass.callWS=async value=>{request=value;return {response:{total:1,records:
   card._hass.callWS=async()=>{throw new Error('unauthorized');};await card.loadActivity(0);assert.ok(root.innerHTML.includes('Administrator access required'));
   console.log('Related activity attribution, pagination, response and permission checks passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+const restHtml=card.activityRow({id:"rest",kind:"rest_action",user_name:"Matt",token_id:"llt",credential_label:"n8n LLT",domain:"light",service:"turn_off",transport:"rest",entity_ids:["light.hallway_light"],invocation_observed:true},new Set());
+assert.ok(restHtml.includes("Matt submitted light.turn_off"));assert.ok(restHtml.includes("n8n LLT"));assert.ok(restHtml.includes("REST (HTTP)"));assert.ok(restHtml.includes("light.hallway_light"));assert.ok(!restHtml.includes("Connection ID"));
+
+const readHtml=card.activityRow({id:"read",kind:"rest_request",user_name:"Matt",token_id:"llt",credential_label:"n8n LLT",method:"GET",endpoint:"/api/states",request_label:"Entity states",http_status:200},new Set());
+assert.ok(readHtml.includes("Matt read Entity states (HTTP 200)"));assert.ok(readHtml.includes("n8n LLT"));assert.ok(!readHtml.includes("unknown.undefined"));
+const sortCard = new Card(); sortCard.setConfig({}); sortCard.tab="credentials";sortCard.user="all";sortCard.query="";sortCard.filter="all";
+sortCard.hass={states:Object.fromEntries([...states,entity("recently_used_tokens",{user_id:"u",connections:[{token_id:"old",label:"Older",last_observed_use_at:"2026-10-01T00:00:00Z",created_at:"2026-10-10T00:00:00Z"},{token_id:"new",label:"Newer activity",last_observed_use_at:"2026-10-10T00:00:00Z",created_at:"2026-10-01T00:00:00Z"}]})].map(e=>[e.entity_id,e]))};sortCard.render();
+assert.equal(sortCard.displayedRows[0].token_id,"new");
+
+assert.ok(html.includes("recent LLT tokens"));assert.ok(html.includes("last 15 min"));
+
+const ipHtml=sortCard.row({token_id:"llt",user_id:"u",label:"N8N",observed_source_ip:"192.0.2.2",observed_ip_source:"http_request",recent_ip_change:true,ip_changed:true},[],new Set());
+assert.ok(ipHtml.includes("192.0.2.2"));assert.ok(ipHtml.includes("HTTP request (HA resolved)"));assert.ok(ipHtml.includes("Recent IP change"));assert.ok(ipHtml.includes("HA inventory IP"));

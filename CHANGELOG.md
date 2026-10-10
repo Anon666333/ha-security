@@ -2,6 +2,51 @@
 
 Published releases use `vMAJOR.MINOR.PATCH` tags matching the integration manifest.
 
+## [0.1.23]
+
+- Project recorded HTTP source IPs into Credentials and IP history, with source/time labels while preserving HA inventory metadata.
+- Highlight recent same-credential IP changes; repeated reads from an unchanged IP do not make an old transition recent.
+- Include recorded HTTP IPs in optional enrichment on inventory scans.
+
+## [0.1.22]
+
+- Count distinct recently used LLT credentials rather than calls on user cards; add spacing below the assessment badge.
+- Widen the credential menu and position it inside the viewport, updating on scroll/resize.
+- Avoid full retention scans per live request, reuse user summaries, refresh service descriptions only when users change, batch entity notifications to 10 seconds, and batch history saves to 20 seconds. Queries no longer schedule writes.
+
+## [0.1.21]
+
+- Fix clipping that hid the credential checkbox menu when opened.
+- Show each user's recent directly observed LLT request/command count beneath the WebSocket connection count, with the configured recent window.
+
+## [0.1.20]
+
+- Apply credential exclusions immediately to displayed activity and prevent background refresh from retaining hidden expanded records. Synchronize checkbox checked state after updates.
+- Group date filters together and place Credentials beside the user selector on the same responsive activity filter row.
+
+## [0.1.19]
+
+- Add a user-scoped credential checkbox dropdown to exclude noisy credentials from retained activity before pagination. Choices persist in the browser.
+- Show HA-resolved HTTP source IPs on newly observed REST reads and service commands when Expose IP/client details is enabled.
+
+## [0.1.18]
+
+- Observe authenticated core REST GET requests for status, states, config, services, events and components; retain only endpoint templates, safe entity IDs and HTTP status.
+- Group observed system_log.write commands with inventory/diagnostics instead of credential actions.
+- Add persistent browser action exclusions with wildcard patterns, applied before pagination.
+- Sort Credentials by most recent observed use across all users.
+
+## [0.1.17]
+
+- Credential recent-use status includes directly observed REST/WebSocket service commands; show HA inventory time and observed command time separately.
+- Avoid entity refreshes triggered by dashboard queries, batch service-event updates, and narrow action-context history requests to six minutes.
+- Show the dashboard version on every tab to help identify stale frontend resources.
+
+## [0.1.16]
+
+- Attribute core REST service POSTs to their authenticated credential alongside WebSocket actions. Use HA credential names unless a dashboard nickname overrides them.
+- Show transport and exact service invocation targets without retaining request bodies or credentials. REST reads and execution outcomes remain outside coverage.
+
 ## [0.1.15]
 
 - Separate Inventory observations from Credential actions with a backend inventory-event allowlist, applied before pagination and totals. Inventory excludes WebSocket commands, login events and user service calls.
