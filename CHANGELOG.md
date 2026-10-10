@@ -2,6 +2,34 @@
 
 Published releases use `vMAJOR.MINOR.PATCH` tags matching the integration manifest.
 
+## [0.1.15]
+
+- Separate Inventory observations from Credential actions with a backend inventory-event allowlist, applied before pagination and totals. Inventory excludes WebSocket commands, login events and user service calls.
+- Explain each activity view's source and attribution scope, especially broader HA user history across credentials.
+- Clear results from a different section while its replacement query loads, preventing stale action rows from appearing under Inventory observations.
+- Verify non-overlap using real action responses in the Python-to-DOM contract tests.
+
+## [0.1.14]
+
+- Diagnose credential matching explicitly (known credential, retained observations/connections/actions); report mismatched backend activity APIs and specific empty-result causes rather than implying no activity.
+- Reset unrelated date filters when opening related activity, apply the main user filter consistently, and prevent missing credential IDs from broadening into unrelated records.
+- Validate live-row IDs through real inventory, session tracking and registered action responses into the DOM, including same-user credential isolation.
+
+- Restore live updates using DOM reconciliation by record/control ID. Keep focused controls and expanded details mounted; append new records while inspecting a list and retain an inspected connection when it closes. Refresh Activity first-page results every 30 seconds; fixed date ranges and later pages remain stable.
+
+- Link observed WebSocket service commands directly to the authenticated credential, session and original HA context. Confirm service invocation only by exact context/user/action match; never infer links from users, timing or parent contexts.
+- Surface existing HA Activity history inline for user-level investigation and related action contexts. Stop adding new user-only service calls to the integration audit timeline.
+- Start related activity with Credential actions; display the known user prominently and state that command submission/invocation does not establish execution success.
+
+- Fix legacy audit responses appearing as "Connection undefined"; generate service, credential and connection descriptions from recorded fields even without backend descriptions.
+- Show readable event details before optional technical JSON, with user-only service attribution and unknown execution outcomes stated plainly.
+- Keep Activity stable during background HA updates; add manual refresh and preserve expanded events and technical details across renders.
+
+- Replace entity-history links with retained related activity, separating direct credential observations, credential-authenticated WebSocket connections, and user-attributed service calls with unknown credentials.
+- Add an admin-only Activity tab with date/user filters, 50-row pagination, readable event descriptions, credential nicknames, structured results and retention/coverage information.
+- Label regular refresh-token, system-token and long-lived access-token records using verified HA token-type values. Display recorded credential expiration separately from issued access-token lifetime.
+- Extend audit/session search actions with credential and timezone-aware date filters; return summaries, pagination and coverage alongside existing structured records.
+
 ## [0.1.13]
 
 - Reduced sensor update work by expanding only the displayed session window, indexing credential audit evidence once, and skipping detail generation for credential counts.

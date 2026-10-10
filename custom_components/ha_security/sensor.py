@@ -249,6 +249,8 @@ class SecurityOverviewSensor(SensorEntity):
             "retained_sessions": sum(row["state"] != "connected" for row in self.monitor.history.sessions),
             "new_observations": sum(row["kind"] in ("new_ip", "new_client", "new_token") for row in self.monitor.history.records),
             "tracking_status": self.monitor.sessions.status,
+            "websocket_action_status": self.monitor.sessions.action_status,
+            "websocket_action_reason": self.monitor.sessions.action_reason,
             "tracking_reason": self.monitor.sessions.reason,
             "tracking_started_at": self.monitor.sessions.started_at,
             "network_details_enabled": self.monitor.expose_network,

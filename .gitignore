@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+
+.test-deps/
+.codex-remote-attachments/

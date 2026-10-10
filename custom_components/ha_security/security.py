@@ -188,7 +188,7 @@ class SecurityHistory:
             self.add("token_removed", old[tid]["user_id"], now, token_id=tid)
         self.previous = current
 
-    def service_call(self, data, context, now=None):
+    def service_call(self, data, context, now=None, persist=True):
         """Record an invocation attributed by HA context, not its outcome."""
         uid = getattr(context, "user_id", None)
         if not uid:
@@ -211,22 +211,51 @@ class SecurityHistory:
             "parent_id": getattr(context, "parent_id", None),
             "outcome": "not_observed",
         }
-        self.add("service_call", uid, now, **metadata)
-        self.last_calls[uid] = self.records[-1]
+        if persist:
+            self.add("service_call", uid, now, **metadata)
+            self.last_calls[uid] = self.records[-1]
+        else:
+            self.last_calls[uid] = {"timestamp": (now or utcnow()).isoformat(), "user_id": uid, **metadata}
         return True
 
     def query(self, text="", user_id=None, kind=None, since=None, until=None,
-              limit=100, offset=0):
+              limit=100, offset=0, token_id=None, category=None):
         self.prune()
         rows = [
-            self.with_user_names(row) for row in reversed(self.records)
+            self.describe_record(row) for row in reversed(self.records)
             if (not user_id or row["user_id"] == user_id)
+            and (not token_id or (row.get("token_id") or row.get("metadata", {}).get("token_id")) == token_id)
+            and (category != "inventory" or row["kind"] in {"baseline_initialized", "token_baseline", "new_token", "token_updated", "token_removed", "new_ip", "new_client"})
             and (not kind or row["kind"] == kind)
-            and (not since or row["timestamp"] >= since)
-            and (not until or row["timestamp"] <= until)
-            and (not text or text.casefold() in json.dumps(self.with_user_names(row), ensure_ascii=False).casefold())
+            and (not since or parse_time(row["timestamp"]) >= parse_time(since))
+            and (not until or parse_time(row["timestamp"]) <= parse_time(until))
+            and (not text or text.casefold() in json.dumps(self.describe_record(row), ensure_ascii=False).casefold())
         ]
-        return {"total": len(rows), "records": rows[offset:offset + limit]}
+        return {"total": len(rows), "records": rows[offset:offset + limit], **self.query_info(len(rows), offset, limit)}
+
+    def query_info(self, total, offset, limit):
+        return {"summary": f"Showing {min(limit, max(0, total-offset))} of {total} matching retained observations.",
+                "offset": offset, "limit": limit, "next_offset": offset+limit if offset+limit < total else None,
+                "coverage": {"retention_days": self.retention_days, "audit_limit": AUDIT_LIMIT,
+                    "oldest_retained_at": min((r["timestamp"] for r in self.records), default=None),
+                    "newest_retained_at": max((r["timestamp"] for r in self.records), default=None),
+                    "limitations": "Retained observations only; not every REST request. WebSocket service commands are linked at context creation; execution outcomes are not observed. Older service-call records identify only a user. Other WebSocket command types and HTTP/REST are outside action coverage. Connections cover observed WebSockets only."}}
+
+    def describe_record(self, row):
+        detail = self.with_user_names(row)
+        metadata = detail.get("metadata") or {}
+        tid = detail.get("token_id") or metadata.get("token_id")
+        credential = metadata or (self.previous or {}).get(tid, {})
+        if not credential and detail.get("session_id"):
+            credential = next((s for s in reversed(self.sessions)
+                               if s.get("session_id") == detail["session_id"] and s.get("token_id") == tid), {})
+        detail["credential_label"] = self.token_labels.get(tid) or credential.get("client_name") or credential.get("client_id") or ("Unnamed credential" if tid else None)
+        labels = {"baseline_initialized": "Initial inventory observed", "token_baseline": "Existing credential first observed", "new_token": "New credential observed", "token_updated": "Credential metadata changed", "token_removed": "Credential removal observed", "new_ip": "New credential IP observed", "new_client": "New client observed", "websocket_action": "WebSocket service command", "service_call": "Service invoked", "login_success": "Successful login observed", "login_failure": "Failed login observed", "recognition_changed": "Recognition changed"}
+        detail["description"] = labels.get(detail["kind"], detail["kind"].replace("_", " "))
+        if detail["kind"] in ("service_call", "websocket_action"):
+            detail["description"] += f": {detail.get('domain', '')}.{detail.get('service', '')} (outcome not observed)"
+        detail["attribution_scope"] = "user_only_credential_unknown" if detail["kind"] == "service_call" else "direct_credential" if tid else "unknown_or_inventory"
+        return detail
 
     def serialize(self):
         self.prune()

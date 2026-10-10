@@ -18,7 +18,7 @@ release workflow and [CHANGELOG.md](../CHANGELOG.md) for update notes.
 
 After installing and restarting Core, enable **Observe login outcomes** in the
 integration's UI options, then update the dashboard module URL to
-`/ha_security/ha-security-card.js?v=0.1.13`. No dashboard YAML changes are required.
+`/ha_security/ha-security-card.js?v=0.1.15`. No dashboard YAML changes are required.
 This is independent of the WebSocket option. Observation starts when enabled;
 old login outcomes cannot be reconstructed from token timestamps.
 
@@ -94,7 +94,7 @@ v0.1.7 fixes the session adapter's constructor check for Python 3.14 deferred
 annotations, used by HA 2026.9.4. It checks parameter names without evaluating
 HA's type-only imports. Unsupported/error tracking also exposes a safe
 `tracking_reason` in entities and the dashboard, plus a warning in Core logs.
-After updating, restart Core, reload the browser resource with `?v=0.1.13`,
+After updating, restart Core, reload the browser resource with `?v=0.1.15`,
 and reconnect clients after enabling session tracking. If tracking is still
 unsupported, report the diagnostic shown on the dashboard.
 
@@ -103,7 +103,7 @@ unsupported, report the diagnostic shown on the dashboard.
 After updating and restarting HA, open **Settings → Dashboards → Resources**
 (enable Advanced mode in your profile if Resources is hidden). Add a resource:
 
-- URL: `/ha_security/ha-security-card.js?v=0.1.13`
+- URL: `/ha_security/ha-security-card.js?v=0.1.15`
 - Type: **JavaScript module**
 
 Replace the separate dashboard's raw configuration with
@@ -519,3 +519,129 @@ exist, changes on `main` alone are not a new HACS version. The workflow uses
 GitHub's source archive; no custom release ZIP or runtime dependency is required.
 Run `python scripts/release.py` locally to validate release metadata without
 publishing anything.
+
+## Next iteration: retained related activity
+
+The Activity tab and **View related activity** buttons use existing administrator-only
+Search audit and Search sessions actions. Activity starts with retained observations,
+not Recorder entity history. Results include readable descriptions, current credential
+nicknames, raw structured results and pages of 50 records. Failed requests display an
+error; non-administrators do not gain access through the dashboard.
+
+Related activity separates direct credential observations (recorded credential ID),
+connections authenticated with that credential (recorded WebSocket credential ID),
+and service invocations attributed to its user (specific credential and connection
+unknown). A selected connection does not make every event for its credential an event
+on that connection. Service invocations do not prove successful execution. Date filters
+use local input times converted to timezone-aware timestamps; session filters use the
+first observation time. Filters are inclusive. Audit coverage timestamps describe the
+retained audit store, rather than complete monitoring uptime or session coverage.
+Retention and the shared 10,000-event audit cap can remove older observations.
+
+Credential types are checked against Home Assistant Core 2026.9.4 auth/models.py:
+`normal`, `system`, and `long_lived_access_token`. Unknown values remain visible as
+unknown types. Credential expiration uses `expire_at` where available; issued access-token
+lifetime is separate and is not presented as refresh-token expiration. Last recorded
+token use is HA inventory metadata and does not observe every HTTP/REST request.
+Credential entity details still require the existing network-details opt-in; admin
+search actions retain their existing access boundary.
+
+Live baseline verification on October 8, 2026: the user confirmed the installed
+manifest is v0.1.13 and the supplied Core-log filter returned no Recorder or slow-update
+warnings. This verifies the retained log window, not every prior/future runtime interval.
+The next iteration has local automated validation only until it is installed and tested.
+
+Activity reading behavior: background entity updates and the card timer do not rebuild
+the Activity tab. Use **Refresh activity** for newer records. Event rows and their
+technical details retain expansion across deliberate renders. Event titles and
+readable field summaries also work with older backend responses lacking descriptions;
+service calls are never inferred to be WebSocket connections. Technical JSON remains
+available under **Technical details (structured result)**.
+
+## Credential-attributed WebSocket service commands
+
+The experimental WebSocket session option also observes **call_service** commands
+at `ActiveConnection.context(msg)`, checked against Core 2026.9.4. This boundary
+provides the authenticated credential record ID, session and original HA context.
+The original context and HA processing are preserved. Observer failures stop action
+observation and expose a diagnostic without changing the original context response.
+This is not complete WebSocket auditing: other command types, binary traffic and
+HTTP/REST are excluded. HA Security's own service calls are omitted to avoid logging
+the investigation itself. No service payloads, templates, credentials, request bodies
+or response bodies are stored. Allowed service-event entity targets are retained;
+device/area targets are not expanded.
+
+A credential action means a service command reached context creation. It can still
+fail validation/permission checks or execution later. An exact context/user/domain/
+service match marks **Service invocation observed**, still without asserting success.
+Links use a bounded 1,000-context, five-minute in-memory cache. Missing, expired,
+user-mismatched and parent-only contexts remain unattributed. Observation starts
+when enabled; older actions cannot be reconstructed. The shared audit retention/cap
+applies. Disabling or unloading clears transient links.
+
+**User activity · HA history** uses HA's `logbook/get_events` API in the dashboard,
+filtering returned `context_user_id` values for the selected user. It does not create
+another persisted user timeline. Queries use a window of up to 24 hours, defaulting
+to the last day, with 50-row display pagination; native history availability follows
+Recorder/Activity retention, filters and the current caller's access. Missing user
+context is not guessed. Existing user-only audit rows remain historical records,
+while new unmatched service calls update only the existing last-call summary.
+**Related HA activity** on a credential action queries HA history by the saved
+original context ID. Related history is contextual evidence, not confirmation of
+successful physical execution. Both views remain inside the security dashboard.
+
+Validation is local with HA-shaped fakes, including same-user credentials and
+out-of-order service events, unattributed/mismatched/expired contexts, observer failure
+isolation and inline native history filtering. A deployed Core 2026.9.4 two-credential
+smoke test remains required before claiming live compatibility.
+
+## Live dashboard reading
+
+HA entity changes update the existing DOM by stable record/control identity rather
+than replacing the whole card. Counts, badges and timestamps remain live while native
+controls and expanded details stay mounted. Focused selects/inputs are left untouched.
+The 30-second timer updates relative timestamps and reloads Activity's first page;
+fixed end dates and later result pages do not poll. Explicit refresh is still available.
+
+While a list has expanded details, existing records keep their order and new records
+append. An inspected live connection that closes remains visible with its recorded
+closed status. If it leaves observation without an ended record, it is labelled as
+no longer observed, preserving only its last details. Other inspected rows that leave
+the displayed window are retained while open. Closing them allows their removal on
+the next update. Expanded rows are remembered separately per tab; scroll anchoring
+compensates for layout changes above the first expanded record.
+
+DOM identity regression tests cover changing counts, focused select preservation,
+arrival order, connection closure and nested expansion. Native mobile dropdown and
+scroll behavior still require a deployed browser smoke test.
+
+## v0.1.14 installation/testing boundary
+
+Install the whole `custom_components/ha_security` directory together and restart Core
+once; then load the card resource with `?v=0.1.15`. Related activity reports dashboard
+and backend versions plus credential-match counts. An older backend lacking activity
+API version 2 is explicitly identified. Opening related activity resets inherited date
+filters; a record without a captured credential ID cannot broaden the query to all
+credentials. Inventory observations are first appearances/metadata changes/removals,
+not service action history.
+
+The Python-to-DOM contract test generates responses from an actual metadata snapshot,
+connection tracker and registered admin service handlers, then clicks the live row's
+related button and mode controls. It verifies the baseline observation, authenticated
+connection and service command for one credential, excluding a second credential of
+the same user. Tests use HA-shaped fakes, so installed first-iteration compatibility
+and the real mobile browser still require a post-install smoke test. Historical
+user-only calls will never acquire a credential ID retroactively.
+
+## v0.1.15 activity categories
+
+**Credential actions** queries only `websocket_action`. **Inventory observations**
+uses `category: inventory`, whose allowlist is baseline initialization, credential
+baseline/new/updated/removed, new IP and new client. The category filter applies
+before totals and pagination; it excludes commands, login events, service calls
+and recognition events. **User activity · HA history** reads native HA history and
+filters only the user, never a credential or connection. It may contain effects of
+credential commands but is broader supporting context, not another command list.
+Switching sections clears the previous section's results until the new query returns.
+Install the matching integration and card together; the new inventory filter requires
+the v0.1.15 backend. No older user history is reattributed to a credential.

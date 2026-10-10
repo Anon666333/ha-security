@@ -3,13 +3,14 @@
 import voluptuous as vol
 import json
 from copy import deepcopy
+from pathlib import Path
 
 from homeassistant.core import SupportsResponse
 from homeassistant.helpers.service import async_register_admin_service, async_get_all_descriptions, async_set_service_schema
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
-from .security import SecurityHistory, token_metadata, safe_ip, utcnow
+from .security import SecurityHistory, token_metadata, safe_ip, utcnow, parse_time
 from .risk import session_assessment
 
 
@@ -37,8 +38,31 @@ class AuditStore:
 
 def register_actions(hass, monitor):
     """Register admin-only responses; raw service data never enters history."""
+    integration_version = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
+
+    def scope_info(data):
+        tid, uid = data.get("token_id"), data.get("user_id")
+        result = {"activity_api_version": 2, "integration_version": integration_version}
+        if tid:
+            records = [r for r in monitor.history.records
+                       if (r.get("token_id") or (r.get("metadata") or {}).get("token_id")) == tid
+                       and (not uid or r.get("user_id") == uid)]
+            sessions = [r for r in monitor.history.sessions if r.get("token_id") == tid
+                        and (not uid or r.get("user_id") == uid)]
+            current = any(r.get("token_id") == tid and (not uid or r.get("user_id") == uid)
+                          for r in (monitor.snapshot or {}).get("tokens", []))
+            result["credential_scope"] = {
+                "token_id": tid, "user_id": uid, "in_current_inventory": current,
+                "retained_observations": len(records), "retained_connections": len(sessions),
+                "retained_actions": sum(r.get("kind") == "websocket_action" for r in records),
+                "known": current or bool(records or sessions),
+            }
+        return result
+
     async def query(call):
         result = monitor.history.query(**dict(call.data))
+        result.update(scope_info(call.data))
+        result.update(websocket_action_status=monitor.sessions.action_status, websocket_action_reason=monitor.sessions.action_reason)
         monitor.audit.changed()
         return result
 
@@ -109,6 +133,13 @@ def register_actions(hass, monitor):
                 continue
             if call.data.get("state") and row["state"] != call.data["state"]:
                 continue
+            if call.data.get("token_id") and row.get("token_id") != call.data["token_id"]:
+                continue
+            stamp = parse_time(row.get("first_observed_at"))
+            if call.data.get("since") and (stamp is None or stamp < parse_time(call.data["since"])):
+                continue
+            if call.data.get("until") and (stamp is None or stamp > parse_time(call.data["until"])):
+                continue
             detail = monitor.history.with_user_names(row)
             if "security_level" not in detail:
                 detail.update(session_assessment(monitor.history, row))
@@ -121,12 +152,21 @@ def register_actions(hass, monitor):
         offset = call.data.get("offset", 0)
         monitor.audit.changed()
         return {"total": len(values), "sessions": values[offset:offset + call.data.get("limit", 100)],
-                "tracking_status": monitor.sessions.status}
+                "tracking_status": monitor.sessions.status, **scope_info(call.data), **monitor.history.query_info(len(values), offset, call.data.get("limit", 100))}
+
+    def timestamp(value):
+        if not isinstance(value, str) or parse_time(value) is None:
+            raise vol.Invalid("Use an ISO timestamp with timezone")
+        return value
 
     schema = vol.Schema({
         vol.Optional("text", default=""): str,
+        vol.Optional("token_id"): str,
+        vol.Optional("since"): timestamp,
+        vol.Optional("until"): timestamp,
         vol.Optional("user_id"): str,
         vol.Optional("kind"): str,
+        vol.Optional("category"): vol.In(("inventory",)),
         vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
         vol.Optional("offset", default=0): vol.All(int, vol.Range(min=0)),
     })
@@ -136,6 +176,9 @@ def register_actions(hass, monitor):
         ("scan_now", scan, vol.Schema({})),
         ("query_sessions", sessions, vol.Schema({
             vol.Optional("text", default=""): str,
+            vol.Optional("token_id"): str,
+            vol.Optional("since"): timestamp,
+            vol.Optional("until"): timestamp,
             vol.Optional("user_id"): str,
             vol.Optional("state"): vol.In(("connected", "closed", "interrupted")),
             vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),

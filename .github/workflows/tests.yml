@@ -19,6 +19,8 @@ jobs:
       - run: python -m compileall -q custom_components
       - run: node --check custom_components/ha_security/www/ha-security-card.js
       - run: node tests/frontend.test.cjs
+      - run: npm install --prefix .test-deps --no-save --package-lock=false linkedom@0.18.12
+      - run: node tests/frontend-dom.test.cjs
 
   release:
     name: Publish tested release

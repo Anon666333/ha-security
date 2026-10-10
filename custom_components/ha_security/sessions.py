@@ -5,6 +5,8 @@ from datetime import datetime
 import inspect
 import logging
 import uuid
+import re
+from time import monotonic
 
 from .security import safe_client, safe_ip, utcnow
 from .risk import session_assessment
@@ -22,6 +24,9 @@ class SessionTracker:
         self.status = "disabled"
         self.reason = None
         self.started_at = None
+        self.action_status = "disabled"
+        self.action_reason = None
+        self.action_contexts = {}
         # Persisted open connections belong to a previous monitoring run.
         for row in self.history.sessions:
             if row["state"] == "connected":
@@ -76,6 +81,60 @@ class SessionTracker:
             row.update(state="closed", closed_at=now, ended_at=now, end_reason="connection_closed")
             self.changed()
 
+    def observe_action(self, connection, msg, context):
+        """Link only supported service commands at HA's context creation boundary.
+
+        Never retain service payloads, templates, response bodies or token values.
+        Context IDs link invocations; neither users nor timestamps establish a link.
+        """
+        if self.action_status != "observing" or not isinstance(msg, dict):
+            return
+        if msg.get("type") != "call_service" or msg.get("domain") == "ha_security":
+            return
+        tid = getattr(connection, "refresh_token_id", None)
+        uid = connection.user.id
+        cid = getattr(context, "id", None)
+        if not isinstance(tid, str) or not tid or not isinstance(cid, str) or not cid:
+            return
+        if getattr(context, "user_id", None) != uid:
+            return
+        domain, service = msg.get("domain"), msg.get("service")
+        if not all(isinstance(v, str) and re.fullmatch(r"[a-z0-9_]{1,64}", v) for v in (domain, service)):
+            return
+        self.observe(connection)
+        self.prune_action_contexts()
+        self.history.add("websocket_action", uid, token_id=tid,
+                         session_id=self.live[id(connection)]["session_id"],
+                         context_id=cid, domain=domain, service=service,
+                         transport="websocket", command="call_service",
+                         invocation_observed=False, outcome="not_observed")
+        row = self.history.records[-1]
+        self.action_contexts[cid] = (monotonic(), row)
+        while len(self.action_contexts) > 1000:
+            del self.action_contexts[next(iter(self.action_contexts))]
+        self.changed()
+
+    def prune_action_contexts(self):
+        cutoff = monotonic() - 300
+        self.action_contexts = {cid: item for cid, item in self.action_contexts.items() if item[0] >= cutoff}
+
+    def link_service_event(self, data, context):
+        """Mark the exact originating invocation; never inherit parent attribution."""
+        self.prune_action_contexts()
+        item = self.action_contexts.get(getattr(context, "id", None))
+        if not item:
+            return False
+        row = item[1]
+        if (getattr(context, "user_id", None) != row["user_id"]
+                or data.get("domain") != row["domain"] or data.get("service") != row["service"]):
+            return False
+        row["invocation_observed"] = True
+        # Reuse the existing strict entity-target allowlist, without another timeline.
+        self.history.service_call(data, context, persist=False)
+        row["entity_ids"] = self.history.last_calls[row["user_id"]]["entity_ids"]
+        self.changed()
+        return True
+
     def refresh_credential_ips(self, tokens):
         """Link latest same-token observations while live; freeze on closure."""
         by_id = {row["token_id"]: row for row in tokens}
@@ -94,6 +153,8 @@ class SessionTracker:
                        end_reason="monitoring_stopped")
         self.live.clear()
         self.status = "disabled"
+        self.action_status = "disabled"
+        self.action_contexts.clear()
 
     def view(self, user_id, network=False):
         # Count all retained rows, but expand only the bounded dashboard window.
@@ -205,6 +266,27 @@ def install_adapter(hass, tracker, connection_class=None, auth_class=None):
             safe_observe(connection, lambda: tracker.close(connection))
 
     wrappers = {"__init__": init, "async_handle": handle, "async_handle_close": close}
+    context_original = getattr(connection_class, "context", None)
+    if callable(context_original) and not inspect.iscoroutinefunction(context_original):
+        @wraps(context_original)
+        def action_context(connection, *args, **kwargs):
+            context = context_original(connection, *args, **kwargs)
+            msg = args[0] if args else kwargs.get("msg")
+            # Preserve the original context object and all core behavior.
+            try:
+                if connection.hass is hass and tracker.status == "observing":
+                    tracker.observe_action(connection, msg, context)
+            except Exception as err:
+                tracker.action_status = "error"
+                tracker.action_reason = f"context_observation: {type(err).__name__}"
+                _LOGGER.warning("WebSocket action observation stopped (%s)", type(err).__name__)
+            return context
+        originals["context"] = context_original
+        wrappers["context"] = action_context
+        tracker.action_status = "observing"
+    else:
+        tracker.action_status = "unsupported"
+        tracker.action_reason = "Synchronous connection context method unavailable"
     tracker.start()
     for name, wrapper in wrappers.items():
         setattr(connection_class, name, wrapper)

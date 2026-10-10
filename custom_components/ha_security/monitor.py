@@ -143,7 +143,8 @@ class AuthMonitor:
         async with self._lock:
             if self.stopped:
                 return
-            if self.history.service_call(event.data, event.context):
+            if (self.sessions.link_service_event(event.data, event.context)
+                    or self.history.service_call(event.data, event.context, persist=False)):
                 if self.audit:
                     self.audit.changed()
                 await self._notify()

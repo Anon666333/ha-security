@@ -2,6 +2,21 @@ query_audit:
   name: Search audit history
   description: Search retained local audit metadata. Administrator access required.
   fields:
+    token_id:
+      name: Credential record ID
+      description: Filter by a directly recorded credential ID. User service calls have no credential ID.
+      selector:
+        text: null
+    since:
+      name: From timestamp
+      description: ISO timestamp with timezone; sessions use first observation time.
+      selector:
+        text: null
+    until:
+      name: Through timestamp
+      description: ISO timestamp with timezone, inclusive.
+      selector:
+        text: null
     text:
       name: Search text
       selector:
@@ -13,6 +28,13 @@ query_audit:
           options: []
           mode: dropdown
           custom_value: true
+    category:
+      name: Audit category
+      description: Inventory includes only baseline, credential appearance, metadata/IP/client changes and removal; excludes commands and login events.
+      selector:
+        select:
+          options:
+          - inventory
     kind:
       name: Event kind
       selector:
@@ -25,6 +47,7 @@ query_audit:
           - token_removed
           - new_ip
           - new_client
+          - websocket_action
           - service_call
           - login_success
           - login_failure
@@ -73,6 +96,21 @@ query_sessions:
   description: Search retained observed WebSocket connections. Requires admin access
     and a response.
   fields:
+    token_id:
+      name: Credential record ID
+      description: Filter by a directly recorded credential ID. User service calls have no credential ID.
+      selector:
+        text: null
+    since:
+      name: From timestamp
+      description: ISO timestamp with timezone; sessions use first observation time.
+      selector:
+        text: null
+    until:
+      name: Through timestamp
+      description: ISO timestamp with timezone, inclusive.
+      selector:
+        text: null
     text:
       name: Search text
       selector:
